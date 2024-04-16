@@ -8,3 +8,4 @@ build
 *gif
 third_party/*
 tmp*
+logs
