@@ -1,4 +1,3 @@
-
 import math
 import torch
 import torch.nn as nn
@@ -10,6 +9,7 @@ import utils
 from init import complex_texture_sampling
 from datetime import datetime
 import os
+import render
 
 class SimpleGaussian:
     def __init__(self, gt_image, gt_depth=None, num_points=100000, background="black", depth_scale=1.):
@@ -163,96 +163,31 @@ class SimpleGaussian:
         
         for iteration in range(0, iterations):
             loss = 0.
+
+            input_group = [
+                self.get_attribute("xyz"),
+                self.get_attribute("scale"),
+                self.get_attribute("rotate"),
+                self.get_attribute("opacity"),
+                self.get_attribute("rgb"),
+                self.intr,
+                self.extr,
+                self.bg,
+                self.W,
+                self.H,
+            ]
             
-            # project points
-            (uv, depth) = msplat.project_point(
-                self.get_attribute("xyz"), 
-                self.intr, self.extr, self.W, self.H
-            )
-            visible = depth != 0
-            self.last_uv = uv.detach()
-            self.last_depth = depth.detach()
+            # render image
+            rendered_rgb, uv, depth = render.render_return_rgb_uv_d(*input_group)
 
-            # compute cov3d
-            cov3d = msplat.compute_cov3d(
-                self.get_attribute("scale"), 
-                self.get_attribute("rotate"), 
-                visible
-            )
+            # render depth 
+            rendered_depth = render.render_depth(*input_group)
 
-            # ewa project
-            (conic, radius, tiles_touched) = msplat.ewa_project(
-                self.get_attribute("xyz"), 
-                cov3d, 
-                self.intr, self.extr, uv, 
-                self.W, self.H, visible
-            )
-
-            # sort
-            (gaussian_ids_sorted, tile_range) = msplat.sort_gaussian(
-                uv, depth, self.W, self.H, radius, tiles_touched
-            )
-
-            # alpha blending image
-            rendered_rgb = msplat.alpha_blending(
-                uv, conic, 
-                self.get_attribute("opacity"),
-                self.get_attribute("rgb"), 
-                gaussian_ids_sorted, tile_range, 
-                self.bg, self.W, self.H,
-            )
-
-            # alpha blending depth 
-            rendered_depth = msplat.alpha_blending(
-                uv, conic, 
-                self.get_attribute("opacity"),
-                depth, 
-                gaussian_ids_sorted, tile_range, 
-                self.bg, self.W, self.H,
-            )
-
-            # alpha blending colorful depth map
-            # print(depth.shape)
-            depth_color = utils.apply_float_colormap(
-                depth, colormap="turbo", non_zero=True
-            )
-            # print(depth_color.shape)
-            rendered_depth_map = msplat.alpha_blending(
-                uv, conic, 
-                self.get_attribute("opacity"),
-                depth_color,
-                gaussian_ids_sorted, tile_range, 
-                self.bg, self.W, self.H,
-            )
-
-            # alpha blending center
-            cov3d = msplat.compute_cov3d(
-                torch.ones_like(self.get_attribute("scale")) * 1e-2, 
-                self.get_attribute("rotate"), 
-                visible
-            )
-
-            # ewa project
-            (conic, radius, tiles_touched) = msplat.ewa_project(
-                self.get_attribute("xyz"), 
-                cov3d, 
-                self.intr, self.extr, uv, 
-                self.W, self.H, torch.ones_like(visible)
-            )
-
-            # sort
-            (gaussian_ids_sorted_, tile_range_) = msplat.sort_gaussian(
-                uv, depth, self.W, self.H, radius, tiles_touched
-            )
-            # print(conic_[:10])
-
-            rendered_center = msplat.alpha_blending(
-                uv, conic, 
-                self.get_attribute("opacity"),
-                self.get_attribute("rgb"), 
-                gaussian_ids_sorted, tile_range, 
-                self.bg, self.W, self.H,
-            )
+            # render colorful depth map
+            rendered_depth_map = render.render_depth_map(*input_group)
+            
+            # render center
+            rendered_center = render.render_center(*input_group)
             
             loss_rgb = mse_loss(rendered_rgb.permute(1, 2, 0), self.gt_image)
             loss += loss_rgb
@@ -291,6 +226,8 @@ class SimpleGaussian:
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
+            self.last_uv = uv.detach()
+            self.last_depth = depth.detach()
 
             progress_dict["total"] = loss.item()
             progress_bar.set_postfix(progress_dict)
@@ -322,19 +259,13 @@ class SimpleGaussian:
 
             if iteration % 10 == 0:
                 # rgb
-                rendered_rgb = rendered_rgb.detach().permute(1, 2, 0)
-                rendered_rgb = torch.clamp(rendered_rgb, 0.0, 1.0)
-                rendered_rgb_np = (rendered_rgb.cpu().numpy() * 255).astype(np.uint8)
+                rendered_rgb_np = render.render2img(rendered_rgb)
                 frames.append(rendered_rgb_np)
                 # depth map
-                rendered_depth_map = rendered_depth_map.detach().permute(1, 2, 0)
-                rendered_depth_map = torch.clamp(rendered_depth_map, 0.0, 1.0)
-                rendered_depth_map_np = (rendered_depth_map.cpu().numpy() * 255).astype(np.uint8)
+                rendered_depth_map_np = render.render2img(rendered_depth_map)
                 frames_depth.append(rendered_depth_map_np)
                 # center
-                rendered_center = rendered_center.detach().permute(1, 2, 0)
-                rendered_center = torch.clamp(rendered_center, 0.0, 1.0)
-                rendered_center_np = (rendered_center.cpu().numpy() * 255).astype(np.uint8)
+                rendered_center_np = render.render2img(rendered_center)
                 frames_center.append(rendered_center_np)
         
         progress_bar.close()
