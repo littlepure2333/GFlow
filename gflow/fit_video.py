@@ -91,7 +91,7 @@ def main(
     gt_depth0 = image_path_to_tensor(img_depth_paths[0], resize=resize, blur=blur)
 
     trainer = SimpleGaussian(gt_image=gt_image0, gt_depth=gt_depth0, num_points=num_points, background=background, depth_scale=depth_scale)
-    # trainer.init_gaussians_from_image(gt_image0, gt_depth0)
+    trainer.init_gaussians_from_image(gt_image=gt_image0, gt_depth=gt_depth0, num_points=num_points, t3=trainer.t3)
     frames, frames_center, frames_depth = trainer.train(
         iterations=iterations_first,
         lr=lr,

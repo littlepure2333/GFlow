@@ -59,8 +59,8 @@ class SimpleGaussian:
             "rgb": torch.logit
         }
 
-        if gt_image is not None:
-            self.init_gaussians_from_image(gt_image=gt_image, gt_depth=gt_depth, num_points=num_points, t3=t3)
+        # if gt_image is not None:
+        #     self.init_gaussians_from_image(gt_image=gt_image, gt_depth=gt_depth, num_points=num_points, t3=t3)
         
         # Get current date and time as string
         now = datetime.now().strftime("%Y_%m_%d-%H_%M_%S")
@@ -176,28 +176,33 @@ class SimpleGaussian:
                 self.W,
                 self.H,
             ]
-            
-            # render image
-            rendered_rgb, uv, depth = render.render_return_rgb_uv_d(*input_group)
 
-            # render depth 
-            rendered_depth = render.render_depth(*input_group)
+            return_dict = render.render_multiple(
+                input_group,
+                ["rgb", "uv", "depth", "depth_map", "depth_map_color", "center"]
+            )
+
+            # render image
+            rendered_rgb, uv, depth = return_dict["rgb"], return_dict["uv"], return_dict["depth"]
+            
+            # render depth map
+            rendered_depth_map = return_dict["depth_map"]
 
             # render colorful depth map
-            rendered_depth_map = render.render_depth_map(*input_group)
+            rendered_depth_map_color = return_dict["depth_map_color"]
             
             # render center
-            rendered_center = render.render_center(*input_group)
+            rendered_center = return_dict["center"]
             
             loss_rgb = mse_loss(rendered_rgb.permute(1, 2, 0), self.gt_image)
             loss += loss_rgb
             progress_dict = {"rgb": loss_rgb.item()}
 
-            rendered_depth = rendered_depth.permute(1, 2, 0) - self.t3
+            rendered_depth_map = rendered_depth_map.permute(1, 2, 0) - self.t3
             # import pdb
             # pdb.set_trace()
             if lambda_depth > 0:
-                loss_depth = mse_loss(rendered_depth, self.gt_depth)
+                loss_depth = mse_loss(rendered_depth_map, self.gt_depth)
                 loss += lambda_depth * loss_depth
                 progress_dict["depth"] = loss_depth.item()
 
@@ -262,8 +267,8 @@ class SimpleGaussian:
                 rendered_rgb_np = render.render2img(rendered_rgb)
                 frames.append(rendered_rgb_np)
                 # depth map
-                rendered_depth_map_np = render.render2img(rendered_depth_map)
-                frames_depth.append(rendered_depth_map_np)
+                rendered_depth_map_color_np = render.render2img(rendered_depth_map_color)
+                frames_depth.append(rendered_depth_map_color_np)
                 # center
                 rendered_center_np = render.render2img(rendered_center)
                 frames_center.append(rendered_center_np)
@@ -274,7 +279,7 @@ class SimpleGaussian:
             os.makedirs(os.path.join(self.dir, "images"), exist_ok=True)
             imageio.imwrite(os.path.join(self.dir, "images", f"img_{ckpt_name}.png"), rendered_rgb_np)
             imageio.imwrite(os.path.join(self.dir, "images", f"img_center_{ckpt_name}.png"), rendered_center_np)
-            imageio.imwrite(os.path.join(self.dir, "images", f"img_depth_{ckpt_name}.png"), rendered_depth_map_np)
+            imageio.imwrite(os.path.join(self.dir, "images", f"img_depth_{ckpt_name}.png"), rendered_depth_map_color_np)
 
         if save_videos:
             # save them as a video with imageio
@@ -345,6 +350,7 @@ class SimpleGaussian:
             self.get_attribute("opacity"),
             self.get_attribute("rgb"),
         )
+        
 
         out_img_traj, out_img_center_traj, out_img_depth_traj = self.render(
             self.traj_xyz, 
@@ -369,89 +375,28 @@ class SimpleGaussian:
         return out_img, out_img_center, out_img_depth, out_img_traj, out_img_center_traj, out_img_depth_traj, out_img_traj_upon
 
     def render(self, xyz, scale, rotate, opacity, rgb):
-        # project points
-        (uv, depth) = msplat.project_point(
-            xyz, 
-            self.intr, self.extr, self.W, self.H
-        )
-        visible = depth != 0
-
-        # compute cov3d
-        cov3d = msplat.compute_cov3d(
-            scale, 
-            rotate, 
-            visible
-        )
-
-        # ewa project
-        (conic, radius, tiles_touched) = msplat.ewa_project(
-            xyz, 
-            cov3d, 
-            self.intr, self.extr, uv, 
-            self.W, self.H, visible
-        )
-
-        # sort
-        (gaussian_ids_sorted, tile_range) = msplat.sort_gaussian(
-            uv, depth, self.W, self.H, radius, tiles_touched
-        )
-
-        # alpha blending image
-        rendered_rgb = msplat.alpha_blending(
-            uv, conic, 
+        input_group = [
+            xyz,
+            scale,
+            rotate,
             opacity,
-            rgb, 
-            gaussian_ids_sorted, tile_range, 
-            self.bg, self.W, self.H,
-        )
+            rgb,
+            self.intr,
+            self.extr,
+            self.bg,
+            self.W,
+            self.H,
+        ]
 
-        # alpha blending colorful depth map
-        # print(depth.shape)
-        depth_color = utils.apply_float_colormap(
-            depth, colormap="turbo", non_zero=True
-        )
-        # print(depth_color.shape)
-        rendered_depth_map = msplat.alpha_blending(
-            uv, conic, 
-            opacity,
-            depth_color,
-            gaussian_ids_sorted, tile_range, 
-            self.bg, self.W, self.H,
-        )
-
-        # alpha blending center
-        cov3d_ = msplat.compute_cov3d(
-            torch.ones_like(scale) * 1e-2, 
-            rotate, 
-            visible
-        )
-
-        # ewa project
-        (conic_, radius_, tiles_touched_) = msplat.ewa_project(
-            xyz, 
-            cov3d_, 
-            self.intr, self.extr, uv, 
-            self.W, self.H, torch.ones_like(visible)
-        )
-
-        # sort
-        (gaussian_ids_sorted_, tile_range_) = msplat.sort_gaussian(
-            uv, depth, self.W, self.H, radius_, tiles_touched_
-        )
-        # print(conic_[:10])
-
-        rendered_center = msplat.alpha_blending(
-            uv, conic_, 
-            opacity,
-            rgb, 
-            gaussian_ids_sorted_, tile_range_, 
-            self.bg, self.W, self.H,
+        output_dict = render.render_multiple(
+            input_group,
+            ["rgb", "center", "depth_map_color"]
         )
         
-        out_img = (rendered_rgb.detach().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-        out_img_center = (rendered_center.detach().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-        out_img_depth = (rendered_depth_map.detach().permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
-
+        out_img = render.render2img(output_dict["rgb"])
+        out_img_center = render.render2img(output_dict["center"])
+        out_img_depth = render.render2img(output_dict["depth_map_color"])
+        
         return out_img, out_img_center, out_img_depth
 
 

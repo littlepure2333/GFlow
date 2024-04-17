@@ -10,8 +10,8 @@ from PIL import Image
 # add the path to the depth-anything package
 import sys
 sys.path.append('/home/wangshizun/projects/gsplat/depth_anything')
-from depth_anything.dpt import DepthAnything
-from depth_anything.util.transform import Resize, NormalizeImage, PrepareForNet
+# from depth_anything.dpt import DepthAnything
+# from depth_anything.util.transform import Resize, NormalizeImage, PrepareForNet
 from torchvision.transforms import Compose
 import torch.nn.functional as F
 import tyro

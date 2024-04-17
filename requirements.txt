@@ -10,3 +10,6 @@ opencv-python
 trimesh
 scipy
 huggingface-hub
+torchsnooper
+matplotlib
+gpustat
