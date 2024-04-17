@@ -10,6 +10,8 @@ from init import complex_texture_sampling
 from datetime import datetime
 import os
 import render
+import cv2
+import matplotlib
 
 class SimpleGaussian:
     def __init__(self, gt_image, gt_depth=None, num_points=100000, background="black", depth_scale=1.):
@@ -68,6 +70,10 @@ class SimpleGaussian:
         # Create a directory with the current date and time as its name
         directory = f"logs/{now}"
         os.makedirs(directory, exist_ok=True)
+        # make a new directory, always soft link to the current run
+        abs_directory = os.path.abspath(directory)
+        os.system(f"rm logs/0_latest")
+        os.system(f"ln -s {abs_directory} logs/0_latest")
         self.dir = directory
     
     def add_optimizer(self, lr=1e-2):
@@ -149,7 +155,8 @@ class SimpleGaussian:
         checkpoint = torch.load(checkpoint_path)
         self._attributes = checkpoint
     
-    def train(self, iterations=500, lr=1e-2, lambda_depth=0., lambda_flow=0.,
+    def train(self, iterations=500, lr=1e-2, 
+              lambda_depth=0., lambda_flow=0., lambda_var=0.,
               save_imgs=False, save_videos=False, save_ckpt=False,
               ckpt_name="ckpt", densify_interval=500, densify_times=1, 
               grad_threshold=5e-3, mask=None):
@@ -196,7 +203,7 @@ class SimpleGaussian:
             
             loss_rgb = mse_loss(rendered_rgb.permute(1, 2, 0), self.gt_image)
             loss += loss_rgb
-            progress_dict = {"rgb": loss_rgb.item()}
+            progress_dict = {"rgb": f"{loss_rgb.item():.6f}"}
 
             rendered_depth_map = rendered_depth_map.permute(1, 2, 0) - self.t3
             # import pdb
@@ -204,7 +211,14 @@ class SimpleGaussian:
             if lambda_depth > 0:
                 loss_depth = mse_loss(rendered_depth_map, self.gt_depth)
                 loss += lambda_depth * loss_depth
-                progress_dict["depth"] = loss_depth.item()
+                progress_dict["depth"] = f"{loss_depth.item():.6f}"
+
+            if lambda_var: # penaliza the scales with large variance
+                loss_var = torch.mean(torch.var(self.get_attribute("xyz"), dim=0))
+                    # print("\t[loss] loss_var", loss_var.item())
+                loss += lambda_var * loss_var
+                progress_dict["depth"] = f"{loss_var.item():.6f}"
+
 
             if lambda_flow: # ensure local flow consistency
                 num_last_uv = self.last_uv.shape[0]
@@ -225,14 +239,12 @@ class SimpleGaussian:
                 # print(pred_flow.shape, gt_flow.shape)
 
                 loss_flow = mse_loss(pred_flow, gt_flow)
-                loss = loss + loss_flow * lambda_flow
-                progress_dict["flow"] = loss_flow.item()
+                loss += lambda_flow * loss_flow
+                progress_dict["flow"] = f"{loss_flow.item():.6f}"
 
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
-            self.last_uv = uv.detach()
-            self.last_depth = depth.detach()
 
             progress_dict["total"] = loss.item()
             progress_bar.set_postfix(progress_dict)
@@ -274,6 +286,8 @@ class SimpleGaussian:
                 frames_center.append(rendered_center_np)
         
         progress_bar.close()
+        self.last_uv = uv.detach()
+        self.last_depth = depth.detach()
 
         if save_imgs:
             os.makedirs(os.path.join(self.dir, "images"), exist_ok=True)
@@ -295,69 +309,82 @@ class SimpleGaussian:
 
         return frames, frames_center, frames_depth
     
-    def eval(self, iterations: int = 1000, lr: float = 0.01, lr_rgbs: float = 0.02, lr_camera: float = None,
-              save_imgs: bool = False, save_videos: bool = False, only_camera: bool = False, lambda_var: float = 0.0,
-              save_ckpt: bool = False, ckpt_name: str = None, densify_interval: int = 0, loss_verbose: bool = False,
-              fps: int = 30, lambda_depth: float = 0.0, lambda_delta: float = 0.0, grad_threshold: float = 5e-3,
-              lambda_mov: float = 0.0, mask=None, traj_index=None, traj_only=False, fixed_camera=False,):
-        
-        if traj_index is not None:
-            traj_point_scale = 10
-            num_traj = len(traj_index)
-            eps = 1e-15  # avoid logit function input 0 or 1
-            # check if this class has a attribute traj_points
-            if not hasattr(self, 'traj_xyz'): # the first frame
-                self.traj_xyz = self.get_attribute("xyz")[traj_index].to(self.device).float()
-                self.traj_scale = torch.ones((num_traj, 3), device=self.device).float() * (traj_point_scale/(self.H+self.W))
-                # create a no rotation quaternion
-                self.traj_rotate = torch.tensor([1, 0, 0, 0], device=self.device).repeat(num_traj, 1).float()
+    def eval(self, traj_index=None, line_scale=0.6, point_scale=2., alpha=0.5):
+        # line_scale = 0.6
+        # point_scale = 2.
+        # alpha = 0.6 # changing opacity
+        num_traj = len(traj_index)
+        # check if this class has a attribute traj_points
+        if not hasattr(self, 'traj_xyz'): # the first frame
+            self.traj_xyz = self.get_attribute("xyz")[traj_index].to(self.device).float()
+            self.traj_scale = torch.ones((num_traj, 3), device=self.device).float() * point_scale
+            # create a no rotation quaternion
+            self.traj_rotate = torch.tensor([1, 0, 0, 0], device=self.device).repeat(num_traj, 1).float()
 
-                traj_opacity = torch.ones((num_traj, 1), device=self.device).float()
-                traj_opacity = torch.clamp(traj_opacity, min=eps, max=1-eps)
-                self.traj_opacity = torch.logit(traj_opacity)
+            self.traj_opacity = torch.ones((num_traj, 1), device=self.device).float()
 
-                traj_rgb = torch.arange(0, 1, 1/num_traj, device=self.device).float().unsqueeze(1)
-                traj_rgb = utils.apply_float_colormap(traj_rgb, colormap="turbo")
-                traj_rgb = torch.clamp(traj_rgb, min=eps, max=1-eps)
-                self.traj_rgb = self._activations_inv["rgb"](traj_rgb)
+            traj_rgb = torch.arange(0, 1, 1/num_traj, device=self.device).float().unsqueeze(1)
+            traj_rgb = utils.apply_float_colormap(traj_rgb, colormap="turbo")
+            self.traj_rgb = self._activations_inv["rgb"](traj_rgb)
 
-                self.last_traj_xyz = self.traj_xyz
-                self.last_traj_rgb = self.traj_rgb
+            self.last_traj_xyz = self.traj_xyz
+            self.last_traj_rgb = self.traj_rgb
+        else: # the following frames
+            current_xyz = self.get_attribute("xyz")[traj_index].to(self.device).float()
+            line_xyz, line_rgb = utils.gen_line_set(self.last_traj_xyz, current_xyz, self.last_traj_rgb, device=self.device)
+            num_in_line = line_xyz.shape[0]
+            self.traj_xyz = torch.cat([self.traj_xyz, line_xyz], dim=0)
+            num_total = self.traj_xyz.shape[0]
 
-                # print("self.traj_scale.max()", self.scales_act(self.traj_scale).max())
-            else: # the following frames
-                current_xyz = self.get_attribute("xyz")[traj_index].to(self.device).float()
-                line_xyz, line_rgbs, line_scales = utils.gen_line_set(self.last_traj_xyz, current_xyz, self.last_traj_rgb, traj_point_scale, self.H, self.W, device=self.device)
-                line_set_num = line_xyz.shape[0]
-                self.traj_xyz = torch.cat([self.traj_xyz, line_xyz], dim=0)
+            self.traj_scale = torch.ones((num_total, 3), device=self.device).float() * point_scale
 
-                traj_scale_old = torch.ones_like(self.traj_scale, device=self.device) * (traj_point_scale/(self.H+self.W))
-                self.traj_scale = torch.cat([traj_scale_old, line_scales], dim=0)
+            self.traj_rotate = torch.ones((num_total, 4), device=self.device).float()
 
-                self.traj_rotate = torch.cat([self.traj_rotate, torch.cat([torch.tensor([1, 0, 0, 0], device=self.device).repeat(line_set_num, 1)])], dim=0)
+            # gradually fade out the opacity
+            self.traj_opacity *= alpha
+            traj_opacity = torch.ones((num_in_line, 1), device=self.device)
+            self.traj_opacity = torch.cat([self.traj_opacity, traj_opacity], dim=0)
+            # self.point_opacity = torch.ones((num_traj, 1), device=self.device)
 
-                traj_opacity = torch.ones((line_set_num, 1), device=self.device)
-                traj_opacity = torch.clamp(traj_opacity, min=eps, max=1-eps)
-                self.traj_opacity = torch.cat([self.traj_opacity, torch.logit(traj_opacity)], dim=0)
-                self.traj_rgb = torch.cat([self.traj_rgb, line_rgbs], dim=0)
+            self.traj_rgb = torch.cat([self.traj_rgb, line_rgb], dim=0)
+            # self.point_rgb = self.last_traj_rgb
 
-                self.last_traj_xyz = self.get_attribute("xyz")[traj_index].to(self.device).float()
+            self.last_traj_xyz = self.get_attribute("xyz")[traj_index].to(self.device).float()
 
-        out_img, out_img_center, out_img_depth = self.render(
-            self.get_attribute("xyz"), 
+        input_group = [
+            self.get_attribute("xyz"),
             self.get_attribute("scale"),
             self.get_attribute("rotate"),
             self.get_attribute("opacity"),
             self.get_attribute("rgb"),
-        )
-        
+            self.intr, self.extr,
+            self.bg, self.W, self.H,
+        ]
 
-        out_img_traj, out_img_center_traj, out_img_depth_traj = self.render(
-            self.traj_xyz, 
-            self.traj_scale, 
-            self.traj_rotate, 
-            self.traj_opacity, 
-            self.traj_rgb)
+        output_dict = render.render_multiple(
+            input_group,
+            ["rgb", "center", "depth_map_color"]
+        )
+
+        out_img = render.render2img(output_dict["rgb"])
+        out_img_center = render.render2img(output_dict["center"])
+        out_img_depth = render.render2img(output_dict["depth_map_color"])
+        
+        traj_group = [
+            self.traj_xyz,
+            self.traj_scale,
+            self.traj_rotate,
+            self.traj_opacity,
+            self.traj_rgb,
+            self.intr, self.extr,
+            self.bg, self.W, self.H,
+        ]
+
+        out_traj = render.render_traj(
+            traj_group, num_traj, line_scale, point_scale
+        )
+
+        out_img_traj = render.render2img(out_traj)
 
         # screen blending mode
         arr1 = np.array(out_img) / 255.0
@@ -372,7 +399,7 @@ class SimpleGaussian:
         # pdb.set_trace()
 
 
-        return out_img, out_img_center, out_img_depth, out_img_traj, out_img_center_traj, out_img_depth_traj, out_img_traj_upon
+        return out_img, out_img_center, out_img_depth, out_img_traj, out_img_traj_upon
 
     def render(self, xyz, scale, rotate, opacity, rgb):
         input_group = [

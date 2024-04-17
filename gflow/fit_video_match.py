@@ -109,18 +109,11 @@ def main(
             # traj_index = sorted(traj_index, key=lambda x: trainer.means[x, 2])[:5] # sort order is from small to large
             # traj_index = traj_index[:10]
         (out_img, out_img_center, out_img_depth, 
-         out_img_traj, out_img_center_traj, out_img_depth_traj, 
-         out_img_traj_upon ) = trainer.eval(
-            save_imgs=False,
-            save_videos=False,
-            save_ckpt=False,
-            lambda_depth=0,
-            lambda_delta=0,
-            lambda_mov=0,
-            densify_interval=0,
+         out_img_traj, out_img_traj_upon ) = trainer.eval(
             traj_index=traj_index,
-            traj_only=traj_only,
-            fixed_camera=fixed_camera,
+            line_scale=0.2, 
+            point_scale=2., 
+            alpha=0.6
         )
         print("[check] scales.max", trainer.get_attribute("scale").max())
         print("[check] scales.min", trainer.get_attribute("scale").min())
@@ -130,8 +123,6 @@ def main(
         frames_center_sequence.append(out_img_center)
         frames_depth_sequence.append(out_img_depth)
         frames_sequence_traj.append(out_img_traj)
-        frames_center_sequence_traj.append(out_img_center_traj)
-        frames_depth_sequence_traj.append(out_img_depth_traj)
         frames_sequence_traj_upon.append(out_img_traj_upon)
         # if i > 25:
         #     break
@@ -139,8 +130,8 @@ def main(
     
     # generate video
     for name, frames, fps in zip(
-        ["sequence", "sequence_center", "sequence_depth", "sequence_traj", "sequence_center_traj", "sequence_depth_traj", "sequence_traj_upon"],
-        [frames_sequence, frames_center_sequence, frames_depth_sequence, frames_sequence_traj, frames_center_sequence_traj, frames_depth_sequence_traj, frames_sequence_traj_upon],
+        ["sequence", "sequence_center", "sequence_depth", "sequence_traj", "sequence_traj_upon"],
+        [frames_sequence, frames_center_sequence, frames_depth_sequence, frames_sequence_traj, frames_sequence_traj_upon],
         [5, 5, 5, 5, 5, 5, 5]):
         mp4_path = os.path.join(trainer.dir, f"{name}.mp4")
         save_video(mp4_path, frames, fps)

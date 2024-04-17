@@ -131,7 +131,7 @@ def apply_float_colormap(image, colormap: Literal["turbo", "grey"] = "turbo", no
         image_long[..., 0]
     ]
 
-def gen_line_set(xyz1, xyz2, rgbs, traj_point_scale, H, W, device):
+def gen_line_set(xyz1, xyz2, rgb, device):
     # xyz1 = torch.randn((N, 3))
     # xyz2 = torch.randn((N, 3))
     N = xyz1.shape[0]
@@ -142,23 +142,34 @@ def gen_line_set(xyz1, xyz2, rgbs, traj_point_scale, H, W, device):
     diff = xyz2 - xyz1
     diff_norm = torch.norm(diff, dim=1, keepdim=True)
 
-    line_set_means = []
-    line_set_rgbs = []
-    line_set_scales = []
+    line_set_xyz = []
+    line_set_rgb = []
+    line_set_scale = []
+    point_set_xyz = []
+    point_set_rgb = []
+    point_set_scale = []
 
     for i in range(N):
         L = max(2, int(diff_norm[i] * 1000))
         # print(L)
         for j in range(L):
             t = j / (L-1)  
-            increment = xyz1[i] + t * diff[i]  
-            line_set_means.append(increment)
-            line_set_rgbs.append(rgbs[i])
-            line_set_scales.append(torch.ones(3, device=device) * (traj_point_scale/(H+W)))
-        line_set_scales[-1] = line_set_scales[-1] * 7.
+            increment = xyz1[i] + t * diff[i]
+            if j < L-1:
+                line_set_xyz.append(increment)
+                line_set_rgb.append(rgb[i])
+                line_set_scale.append(torch.ones(3, device=device))
+            if j == (L-1):
+                point_set_xyz.append(increment)
+                point_set_rgb.append(rgb[i])
+                point_set_scale.append(torch.ones(3, device=device))
 
-    line_set_means = torch.stack(line_set_means).to(device)
-    line_set_rgbs = torch.stack(line_set_rgbs).to(device)
-    line_set_scales = torch.stack(line_set_scales).to(device)
+    # last N are points
+    line_set_xyz = torch.stack(line_set_xyz+point_set_xyz).to(device)
+    line_set_rgb = torch.stack(line_set_rgb+point_set_rgb).to(device)
+    line_set_scale = torch.stack(line_set_scale+point_set_scale).to(device)
+    point_set_xyz = torch.stack(point_set_xyz).to(device)
+    point_set_rgb = torch.stack(point_set_rgb).to(device)
+    point_set_scale = torch.stack(point_set_scale).to(device)
 
-    return line_set_means, line_set_rgbs, line_set_scales
+    return line_set_xyz, line_set_rgb
