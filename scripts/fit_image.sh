@@ -1,2 +1,2 @@
-CUDA_VISIBLE_DEVICES=5 python \
+CUDA_VISIBLE_DEVICES=6 python \
 gflow/trainer.py

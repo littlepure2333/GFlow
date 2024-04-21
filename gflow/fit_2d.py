@@ -11,19 +11,18 @@ from init import complex_texture_sampling
 
 
 class SimpleGaussian:
-    def __init__(self, num_points=100000, intr=None, extr=None, img=None, t3=1.):
+    def __init__(self, num_points=100000,):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.intr = intr
-        self.extr = extr
         
         N = int(num_points)
         self._attributes = {
             "xyz":      torch.rand((N, 3), dtype=torch.float32).cuda() * 2 - 1,
-            "scale":    torch.rand((N, 3), dtype=torch.float32).cuda(),
+            "scale":    torch.rand((N, 3), dtype=torch.float32).cuda() * 0.01,
             "rotate":   torch.rand((N, 4), dtype=torch.float32).cuda(),
             "opacity":  torch.rand((N, 1), dtype=torch.float32).cuda(),
             "rgb":      torch.rand((N, 3), dtype=torch.float32).cuda()
         }
+        self._attributes["xyz"][:, -1] = torch.zeros_like(self._attributes["xyz"][:, -1])
         
         self._activations = {
             "scale": lambda x: torch.abs(x) + 1e-8,
@@ -40,9 +39,6 @@ class SimpleGaussian:
             "rgb": torch.logit
         }
 
-        if img is not None:
-            self.init_gaussians_from_image(img, num_points=num_points, t3=t3)
-        
         for attribute_name in self._attributes.keys():
             self._attributes[attribute_name] = nn.Parameter(self._attributes[attribute_name]).requires_grad_(True)
         
@@ -53,49 +49,6 @@ class SimpleGaussian:
             self.optimizer.zero_grad()
         self._attributes[name] = nn.Parameter(value).requires_grad_(True)
         self.optimizer = torch.optim.Adam(list(self._attributes.values()), lr=1e-3)
-    
-    def init_gaussians_from_image(self, gt_image, gt_depth=None, num_points=None, t3=1.):
-        # gt_image (H, W, C) in [0, 1]
-        if num_points is None:
-            num_points = self.num_points
-        # gt_image = resize_by_divide(gt_image, 16)
-        xys, depths, scales, rgbs, gt_depth = complex_texture_sampling(gt_image, gt_depth, num_points=num_points, device=self.device)
-        '''
-        for depth, 1 is near, 0 is far!!!
-        '''
-        xys = torch.from_numpy(xys).to(self.device).float() * t3
-        # xys = torch.from_numpy(xys).to(self.device).float()
-        self.gt_depth = gt_depth.to(self.device).float()
-        # print(xys.shape)
-        depths = depths.to(self.device).float()
-        # depths = torch.ones_like(depths).to(self.device).float() * 0.
-        xyd = torch.concatenate((xys, depths), dim=1)
-
-        import pdb
-        input_xyd = xyd.clone()
-        input_xyd[:, :2] = input_xyd[:, :2] / t3
-        input_xyd[:, 0] = (input_xyd[:, 0] + 1) * W / 2.
-        input_xyd[:, 1] = (input_xyd[:, 1] + 1) * H / 2.
-        input_xyd[:, :2] = input_xyd[:, :2] / input_xyd[:, 2:3]
-
-        dummy_xyz = utils.camera2world(input_xyd, self.intr, self.extr)
-        xyd[:10, :] = dummy_xyz[:10, :]
-        self._attributes["xyz"] = xyd
-        pdb.set_trace()
-        fn = lambda x: np.power(x, 0.6)
-        # fn = lambda x: np.sqrt(x)
-        # fn = lambda x: x
-        self.fn = fn
-        scales = self.fn(scales) * (depths.cpu().numpy()+0.5).squeeze() # * [0.5,1.5] decrease near's scales, increase far's scales
-        scales = torch.from_numpy(scales).float().unsqueeze(1).repeat(1, 3).to(self.device)
-        self._attributes["scale"] = self._activations_inv["scale"](scales)
-
-        rgbs = torch.from_numpy(rgbs).float().contiguous().to(self.device)
-        eps = 1e-15  # avoid logit function input 0 or 1
-        rgbs = torch.clamp(rgbs, min=eps, max=1-eps)
-        # calculate the inverse of sigmoid function, i.e., logit function
-        self._attributes["rgb"] = self._activations_inv["rgb"](rgbs)
-
         
     def step(self):
         self.optimizer.step()
@@ -134,7 +87,7 @@ if __name__ == "__main__":
                          [0.0, 1.0, 0.0, 0.0],
                          [0.0, 0.0, 1.0, t3 ]]).cuda().float()
     
-    gaussians = SimpleGaussian(num_points=10000, intr=intr_matrix, extr=extr, img=gt.permute(1, 2, 0), t3=t3) # H, W, C
+    gaussians = SimpleGaussian(num_points=10000) # H, W, C
     
     max_iter = 2000
     frames = []
@@ -147,10 +100,6 @@ if __name__ == "__main__":
             gaussians.get_attribute("xyz"), 
             intr, extr, W, H
         )
-        # uv_pdb
-        import pdb 
-        pdb.set_trace()
-        # uv[:10]
         visible = depth != 0
 
         # compute cov3d

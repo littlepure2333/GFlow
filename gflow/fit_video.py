@@ -96,7 +96,7 @@ def main(
         iterations=iterations_first,
         lr=lr,
         # lr_rgbs=lr_rgbs,
-        # lr_camera=lr_camera,
+        lr_camera=lr_camera,
         save_imgs=True,
         save_videos=True,
         save_ckpt=True,
@@ -117,71 +117,91 @@ def main(
     # fit the subsequent frames
     # for img_path in img_paths[1:]:
     for i, img_path in enumerate(img_paths[1:]):
-        try:
-        # if True:
-            save_name = os.path.basename(img_path).split('.')[0]
-            print(f"[{i+1}/{len(img_paths) - 1}] fitting {img_path}")
-            trainer.load_checkpoint(trainer.checkpoint_path)
-            gt_image = image_path_to_tensor(img_path, resize=resize, blur=blur)
-            gt_depth = image_path_to_tensor(img_depth_paths[i+1], resize=resize, blur=blur)
-            occ_mask = image_path_to_tensor(img_occ_paths[i], resize=resize, blur=blur)
-            gt_flow = readFlow(flow_paths[i], resize=resize, blur=blur)
-            # transform 1 is near to 1 is far
-            gt_depth = 1 - gt_depth
-            trainer.set_gt_image(gt_image)
-            trainer.set_gt_depth(gt_depth)
-            trainer.set_gt_flow(gt_flow)
+        save_name = os.path.basename(img_path).split('.')[0]
+        print(f"[{i+1}/{len(img_paths) - 1}] fitting {img_path}")
+        trainer.load_checkpoint(trainer.checkpoint_path)
+        gt_image = image_path_to_tensor(img_path, resize=resize, blur=blur)
+        gt_depth = image_path_to_tensor(img_depth_paths[i+1], resize=resize, blur=blur)
+        occ_mask = image_path_to_tensor(img_occ_paths[i], resize=resize, blur=blur)
+        gt_flow = readFlow(flow_paths[i], resize=resize, blur=blur)
+        # transform 1 is near to 0 is near
+        gt_depth = 1 - gt_depth
+        trainer.set_gt_image(gt_image)
+        trainer.set_gt_depth(gt_depth)
+        trainer.set_gt_flow(gt_flow)
 
-            if iterations_after > 0:
-                # print(f"[{i+1}/{len(img_paths) - 1}] Rehearshal stage for new points.................")
-                print(f"[{i+1}/{len(img_paths) - 1}] Optimize all .................")
-                if add:
-                    trainer.add_gaussians_from_image(gt_image=gt_image, gt_depth=gt_depth, mask=occ_mask)
-                    pass
-                frames, frames_center, frames_depth = trainer.train(
-                    iterations=iterations_after,
-                    lr=lr_after,
-                    save_imgs=True,
-                    save_videos=False,
-                    save_ckpt=True,
-                    ckpt_name=save_name,
-                    # fps=fps,
-                    lambda_depth=lambda_depth,
-                    lambda_var=lambda_var,
-                    lambda_flow=lambda_flow,
-                    densify_times=densify_times_after,
-                    densify_interval=densify_interval_after,
-                    grad_threshold=grad_threshold_after,
-                    # mask=None,
-                    mask=occ_mask,
-                    # mask=occ_mask.permute(1, 2, 0),
-                    # slow_color=slow_color,
-                    # slow_means=slow_means,
-                )
+        if camera_first:
+            print(f"[{i+1}/{len(img_paths) - 1}] fitting camera-only first.................")
+            frames, frames_center, frames_depth = trainer.train(
+                iterations=iterations_camera,
+                lr=0.,
+                # lr_rgbs=lr_rgbs,
+                lr_camera=lr_camera_after,
+                save_imgs=True,
+                save_videos=False,
+                save_ckpt=True,
+                ckpt_name=save_name,
+                lambda_depth=lambda_depth,
+                lambda_var=lambda_var,
+                densify_times=densify_times,
+                densify_interval=densify_interval,
+                grad_threshold=grad_threshold,
+            )
+            frames_sequence_optimize += frames
+            frames_center_sequence_optimize += frames_center
+            frames_depth_sequence_optimize += frames_depth
+            # frames_sequence.append(frames[-1])
+            # frames_center_sequence.append(frames_center[-1])
+            # frames_depth_sequence.append(frames_depth[-1])
 
             print("[check] scales' max, min", trainer.get_attribute("scale").max().item(), trainer.get_attribute("scale").min().item())
             print("[check] depth_scale", trainer.depth_scale)
             print("[check] depth far, near", trainer.last_depth[trainer.last_depth>0].max(), trainer.last_depth[trainer.last_depth>0].min())
             print("[check] camera extr\n", trainer.extr)
-            # print("[check] scales.max", trainer.get_attribute("scale").max())
-            # print("[check] scales.min", trainer.get_attribute("scale").min())
-            # print("[check] far depth", trainer.prev_depth_abs[trainer.prev_depth_abs>0].max())
-            # print("[check] near depth", trainer.prev_depth_abs[trainer.prev_depth_abs>0].min())
-            # print("[check] viewmat\n", trainer.get_viewmat)
 
-            frames_sequence_optimize += frames
-            frames_center_sequence_optimize += frames_center
-            frames_depth_sequence_optimize += frames_depth
-            frames_sequence.append(frames[-1])
-            frames_center_sequence.append(frames_center[-1])
-            frames_depth_sequence.append(frames_depth[-1])
-        except Exception as e:
-            # raise e
-            if i == 0:
-                raise e
-            else:
-                print(f"*************Error fitting {img_path}: {e}")
-                continue
+        if iterations_after > 0:
+            # print(f"[{i+1}/{len(img_paths) - 1}] Rehearshal stage for new points.................")
+            print(f"[{i+1}/{len(img_paths) - 1}] Optimize all .................")
+            if add:
+                trainer.add_gaussians_from_image(gt_image=gt_image, gt_depth=gt_depth, mask=occ_mask)
+            frames, frames_center, frames_depth = trainer.train(
+                iterations=iterations_after,
+                lr=lr_after,
+                lr_camera=0.,
+                save_imgs=True,
+                save_videos=False,
+                save_ckpt=True,
+                ckpt_name=save_name,
+                # fps=fps,
+                lambda_depth=lambda_depth,
+                lambda_var=lambda_var,
+                lambda_flow=lambda_flow,
+                densify_times=densify_times_after,
+                densify_interval=densify_interval_after,
+                grad_threshold=grad_threshold_after,
+                # mask=None,
+                mask=occ_mask,
+                # mask=occ_mask.permute(1, 2, 0),
+                # slow_color=slow_color,
+                # slow_means=slow_means,
+            )
+
+        print("[check] scales' max, min", trainer.get_attribute("scale").max().item(), trainer.get_attribute("scale").min().item())
+        print("[check] depth_scale", trainer.depth_scale)
+        print("[check] depth far, near", trainer.last_depth[trainer.last_depth>0].max(), trainer.last_depth[trainer.last_depth>0].min())
+        print("[check] camera extr\n", trainer.extr)
+        # print("[check] scales.max", trainer.get_attribute("scale").max())
+        # print("[check] scales.min", trainer.get_attribute("scale").min())
+        # print("[check] far depth", trainer.prev_depth_abs[trainer.prev_depth_abs>0].max())
+        # print("[check] near depth", trainer.prev_depth_abs[trainer.prev_depth_abs>0].min())
+        # print("[check] viewmat\n", trainer.get_viewmat)
+
+        frames_sequence_optimize += frames
+        frames_center_sequence_optimize += frames_center
+        frames_depth_sequence_optimize += frames_depth
+        frames_sequence.append(frames[-1])
+        frames_center_sequence.append(frames_center[-1])
+        frames_depth_sequence.append(frames_depth[-1])
     
     # generate video
     for name, frames, fps in zip(

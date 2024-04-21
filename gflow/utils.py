@@ -150,7 +150,7 @@ def gen_line_set(xyz1, xyz2, rgb, device):
     point_set_scale = []
 
     for i in range(N):
-        L = max(2, int(diff_norm[i] * 1000))
+        L = max(2, int(diff_norm[i] * 100))
         # print(L)
         for j in range(L):
             t = j / (L-1)  

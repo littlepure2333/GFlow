@@ -1,3 +1,21 @@
+# GFlow
+
+## Prepare
+1. Install Msplat following original instructions.
+2. Make sure you have "./images" which contains some image sequences extract from the videos. (You can soft link my dir: `/home/wangshizun/data/images/`)
+
+## Run
+* `bash scripts/fit_2d.sh` A simple test for reconstruct image and optimize camera.
+* `bash scripts/fit_image.sh` Fit an image using texture init.
+* `bash scripts/fit_video.sh` Fit a video. Working in process.
+* `bash scripts/match.sh` Generate gaussian points tracking after fitting a video.
+
+
+
+
+> Below are original readme of MSplat.
+
+
 
 
 # MSplat

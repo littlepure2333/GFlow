@@ -151,9 +151,12 @@ def complex_texture_sampling(gt_image, gt_depth, num_points=5000, device='cpu', 
 
     XY = image.shape[:2][::-1]
     # xys = np.array(sampled_coordinates).T
-    xys = np.array(sampled_coordinates).T[:,::-1]
+    xys = np.array(sampled_coordinates).T[:,::-1].copy()
     xys_norm = (xys / np.array(XY) - 0.5) * 2
-    # transform 1 is near to 0 is far
+    '''
+    for depthAnything, 1 is near, 0 is far!!!
+    '''
+    # transform 1 is near to 0 is near
     gt_depth =  1 - gt_depth
     depths_norm = gt_depth[sampled_coordinates]
     # depths_norm = img_depth_gt[sampled_coordinates][:,None]
@@ -180,7 +183,8 @@ def complex_texture_sampling(gt_image, gt_depth, num_points=5000, device='cpu', 
     # img_depth_gt = img_depth_gt.cpu().numpy().astype(np.uint8)
     # cv2.imwrite('/home/wangshizun/projects/gsplat/test/sampled_image1.jpg', img_depth_gt)
 
-    return xys_norm, depths_norm, scales_norm, rgbs_norm, gt_depth
+    return xys, depths_norm, scales_norm, rgbs_norm, gt_depth
+    # return xys_norm, depths_norm, scales_norm, rgbs_norm, gt_depth
     # return xyzs_norm, scales_norm, rgbs_norm
     # return sampled_coordinates, depth
     # return sampled_coordinates, sampled_image

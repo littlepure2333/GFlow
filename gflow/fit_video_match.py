@@ -53,6 +53,7 @@ def main(
     load_path: str = "/home/wangshizun/projects/gsplat/logs/2024_03_01-16_51_25",
     traj_only: bool = False,
     fixed_camera: bool = False,
+    traj_num: int = 200,
 ) -> None:
     
     frames_sequence = []
@@ -100,7 +101,7 @@ def main(
         trainer.load_checkpoint(ckpt_path)
         if i == 0:
             num_points = len(trainer.get_attribute("xyz"))
-            traj_num = 100 # 0.4% of the points
+            # traj_num = 200 # 0.4% of the points
             interval = int(num_points / traj_num)
             traj_index = range(num_points)[::interval]
             # traj_index = range(num_points)[50:100]
@@ -113,7 +114,7 @@ def main(
             traj_index=traj_index,
             line_scale=0.2, 
             point_scale=2., 
-            alpha=0.6
+            alpha=0.8
         )
         print("[check] scales.max", trainer.get_attribute("scale").max())
         print("[check] scales.min", trainer.get_attribute("scale").min())
@@ -124,8 +125,7 @@ def main(
         frames_depth_sequence.append(out_img_depth)
         frames_sequence_traj.append(out_img_traj)
         frames_sequence_traj_upon.append(out_img_traj_upon)
-        # if i > 25:
-        #     break
+        torch.cuda.empty_cache()
 
     
     # generate video

@@ -12,6 +12,7 @@ import os
 import render
 import cv2
 import matplotlib
+import geometry
 
 class SimpleGaussian:
     def __init__(self, gt_image, gt_depth=None, num_points=100000, background="black", depth_scale=1.):
@@ -70,18 +71,27 @@ class SimpleGaussian:
         # Create a directory with the current date and time as its name
         directory = f"logs/{now}"
         os.makedirs(directory, exist_ok=True)
+        os.makedirs("logs/0_latest", exist_ok=True)
         # make a new directory, always soft link to the current run
         abs_directory = os.path.abspath(directory)
-        os.system(f"rm logs/0_latest")
-        os.system(f"ln -s {abs_directory} logs/0_latest")
+        os.system(f"rm logs/0_latest/*")
+        os.system(f"ln -s {abs_directory} logs/0_latest/{now}")
         self.dir = directory
     
-    def add_optimizer(self, lr=1e-2):
+    def add_optimizer(self, lr=1e-2, lr_camera=0.):
         self.lr = lr
+        self.lr_camera = lr_camera
         for attribute_name in self._attributes.keys():
             self._attributes[attribute_name] = nn.Parameter(self._attributes[attribute_name]).requires_grad_(True)
+        self.extr = nn.Parameter(self.extr).requires_grad_(True)
+
+        # assign different lr to attributes and extr
+        optim_params=[
+            {"params": self._attributes.values(), "lr": lr, "name": "attributes"},
+            {"params": self.extr, "lr": lr_camera, "name": "extr"},
+        ]
         
-        self.optimizer = torch.optim.Adam(list(self._attributes.values()), lr=lr)
+        self.optimizer = torch.optim.Adam(optim_params)
     
     def add_attribute(self, name, value, clear_grad=True):
         if clear_grad:
@@ -93,7 +103,7 @@ class SimpleGaussian:
         self.gt_image = gt_image.to(self.device)
 
     def set_gt_depth(self, gt_depth):
-        self.gt_depth = gt_depth.to(self.device)
+        self.gt_depth = gt_depth.to(self.device) * self.depth_scale + self.t3
 
     def set_gt_flow(self, gt_flow):
         self.gt_flow = gt_flow.to(self.device)
@@ -104,23 +114,23 @@ class SimpleGaussian:
             num_points = self.num_points
         # gt_image = resize_by_divide(gt_image, 16)
         xys, depths, scales, rgbs, gt_depth = complex_texture_sampling(gt_image, gt_depth, num_points=num_points, device=self.device)
-        '''
-        for depth, 1 is near, 0 is far!!!
-        '''
-        xys = torch.from_numpy(xys).to(self.device).float() * t3
-        self.gt_depth = gt_depth.to(self.device).float() * self.depth_scale
+        """depths: 0 is near, 1 is far"""
+        xys = torch.from_numpy(xys).to(self.device).float()
+        # xys = torch.from_numpy(xys).to(self.device).float() * t3
+        depths = depths.to(self.device).float() * self.depth_scale + self.t3
+        self.gt_depth = gt_depth.to(self.device).float() * self.depth_scale + self.t3
         # print(xys.shape)
-        # depths = depths.to(self.device).float() * self.depth_scale
-        depths = torch.ones_like(depths).to(self.device).float() * 0.
-        xyd = torch.concatenate((xys, depths), dim=1)
-        self._attributes["xyz"] = xyd
-        # self._attributes["xyz"] = utils.camera2world(xyd, self.intr, self.extr)
-        fn = lambda x: np.power(x, 0.6)
+        # depths = torch.ones_like(depths).to(self.device).float() * 1.
+        # xyd = torch.concatenate((xys, depths), dim=1)
+        # self._attributes["xyz"] = xyd
+        self._attributes["xyz"] = geometry.pix2world(xys, depths, self.intr, self.extr)
+        # fn = lambda x: np.power(x, 0.6)
         # fn = lambda x: np.sqrt(x)
         # fn = lambda x: x
-        self.fn = fn
-        scales = self.fn(scales) * (depths.cpu().numpy()+0.5).squeeze() # * [0.5,1.5] decrease near's scales, increase far's scales
+        # self.fn = fn
+        # scales = self.fn(scales) * (depths.cpu().numpy()+0.5).squeeze() # * [0.5,1.5] decrease near's scales, increase far's scales
         scales = torch.from_numpy(scales).float().unsqueeze(1).repeat(1, 3).to(self.device)
+        # scales = torch.clamp(scales, max=1e-2)
         self._attributes["scale"] = self._activations_inv["scale"](scales)
 
         rgbs = torch.from_numpy(rgbs).float().contiguous().to(self.device)
@@ -143,7 +153,11 @@ class SimpleGaussian:
             raise ValueError(f"Attribute or activation for {name} is not VALID!")
     
     def save_checkpoint(self, ckpt_name=None):
-        checkpoint = self._attributes
+        checkpoint = {
+            "attributes": self._attributes,
+            "intr": self.intr,
+            "extr": self.extr,
+        }
         if ckpt_name is None:
             ckpt_name = 'ckpt'
         # make directory
@@ -153,9 +167,13 @@ class SimpleGaussian:
 
     def load_checkpoint(self, checkpoint_path):
         checkpoint = torch.load(checkpoint_path)
-        self._attributes = checkpoint
+        self._attributes = checkpoint["attributes"]
+        self.intr = checkpoint["intr"]
+        self.extr = checkpoint["extr"]
+        del checkpoint
+        torch.cuda.empty_cache()
     
-    def train(self, iterations=500, lr=1e-2, 
+    def train(self, iterations=500, lr=1e-2, lr_camera=0.,
               lambda_depth=0., lambda_flow=0., lambda_var=0.,
               save_imgs=False, save_videos=False, save_ckpt=False,
               ckpt_name="ckpt", densify_interval=500, densify_times=1, 
@@ -165,8 +183,16 @@ class SimpleGaussian:
         frames_center = []
         progress_bar = tqdm(range(1, iterations), desc="Training")
         mse_loss = nn.SmoothL1Loss()
-        self.add_optimizer(lr)
+        self.add_optimizer(lr, lr_camera)
         self.reset_densification_stats()
+        # if hasattr(self, 'last_xyz'): # not the first frame
+        #     # initial number of gaussians in this training
+        #     num_g_init = self.get_attribute("xyz").shape[0] 
+        #     # if If xyz of gaussians present nearly no change compared to last xyz, 
+        #     # we consider them as the still gaussians
+        #     xyz_diff = torch.norm(self.get_attribute("xyz") - self.last_xyz, dim=1)
+        #     print("xyz_diff", xyz_diff.min(), xyz_diff.max())
+        #     still_mask = xyz_diff < 1e-9
         
         for iteration in range(0, iterations):
             loss = 0.
@@ -191,6 +217,17 @@ class SimpleGaussian:
 
             # render image
             rendered_rgb, uv, depth = return_dict["rgb"], return_dict["uv"], return_dict["depth"]
+            # print("before xy" , self.get_attribute("xyz")[:,:2].min(), self.get_attribute("xyz")[:,:2].max())
+            # print("before z" , self.get_attribute("xyz")[:,2].min(), self.get_attribute("xyz")[:,2].max())
+            # print("before xyz" , self.get_attribute("xyz")[:5])
+            # print("uv", uv.min(), uv.max())
+            # print("depth", depth.min(), depth.max())
+            # print("uv", uv[:5])
+            # print("depth", depth[:5])
+            xyz = geometry.pix2world(uv, depth, self.intr, self.extr)
+            # print("after xy",xyz[:,:2].min(), xyz[:,:2].max())
+            # print("after z",xyz[:,2].min(), xyz[:,2].max())
+            # print("after xyz",xyz[:5])
             
             # render depth map
             rendered_depth_map = return_dict["depth_map"]
@@ -209,7 +246,9 @@ class SimpleGaussian:
             # import pdb
             # pdb.set_trace()
             if lambda_depth > 0:
-                loss_depth = mse_loss(rendered_depth_map, self.gt_depth)
+                # print("rendered_depth_map", rendered_depth_map.min(), rendered_depth_map.max())
+                # print("gt_depth", self.gt_depth.min(), self.gt_depth.max())
+                loss_depth = mse_loss(rendered_depth_map+self.t3, self.gt_depth)
                 loss += lambda_depth * loss_depth
                 progress_dict["depth"] = f"{loss_depth.item():.6f}"
 
@@ -217,7 +256,7 @@ class SimpleGaussian:
                 loss_var = torch.mean(torch.var(self.get_attribute("xyz"), dim=0))
                     # print("\t[loss] loss_var", loss_var.item())
                 loss += lambda_var * loss_var
-                progress_dict["depth"] = f"{loss_var.item():.6f}"
+                progress_dict["var"] = f"{loss_var.item():.6f}"
 
 
             if lambda_flow: # ensure local flow consistency
@@ -244,6 +283,32 @@ class SimpleGaussian:
 
             self.optimizer.zero_grad()
             loss.backward()
+            # if hasattr(self, 'last_xyz'): # not the first frame
+            #     # for every gaussian, if the gradient of xyz is small, then consider them as still points
+            #     grad_xyz = torch.norm(self.get_attribute("xyz").grad, dim=1)
+            #     print("\t[grad] grad_xyz's max, min:", grad_xyz.max().item(), grad_xyz.min().item())
+            #     grad_mask = grad_xyz < 1e-7
+            #     for name, param in self._attributes.items():
+            #         if name == "xyz":
+            #             param.grad[grad_mask] = 0.
+            #         if name == "rgb":
+            #             param.grad[grad_mask] = 0.
+
+
+
+            # if hasattr(self, 'last_xyz'): # not the first frame
+            #     # Make the first num_g_init gaussians's rgb gradients to be zero
+            #     for name, param in self._attributes.items():
+            #         if name == "rgb":
+            #             param.grad[:num_g_init] = 0.
+            #     # If xyz of gaussians is nearly no change, we consider them as the still gaussians
+            #     # and make their gradients to be zero
+            #     for name, param in self._attributes.items():
+            #         if name == "xyz":
+            #             param.grad[still_mask] = 0.
+            #         if name == "rgb":
+            #             param.grad[still_mask] = 0.
+
             self.optimizer.step()
 
             progress_dict["total"] = loss.item()
@@ -268,10 +333,14 @@ class SimpleGaussian:
                 print("\t[densify] grad_norm's mean, threshold:", grad_norm.mean().item(), grad_threshold)
                 scene_extent = (self.H+self.W)/2
                 self.densify_and_clone(grad_norm, grad_threshold, scene_extent, 0.00005, N=2, mask=mask)
-                self.densify_and_split(grad_norm, grad_threshold*1, scene_extent, 0.0001, N=None, mask=mask, there=True)
+                self.densify_and_split(grad_norm, grad_threshold*1, scene_extent, 0.0001, N=2, mask=mask, there=True)
                 # self.densify_and_split(grad_norm, grad_threshold*1, scene_extent, 0.0001, N=2, mask=None, there=True)
                 torch.cuda.empty_cache()
                 self.reset_densification_stats()
+                # if hasattr(self, 'last_xyz'): # not the first frame
+                #     # update the still_mask
+                #     still_mask_pad = torch.zeros(self.get_attribute("xyz").shape[0]-num_g_init, dtype=torch.bool).to(self.device)
+                #     still_mask = torch.cat((still_mask, still_mask_pad), dim=0)
 
 
             if iteration % 10 == 0:
@@ -288,6 +357,7 @@ class SimpleGaussian:
         progress_bar.close()
         self.last_uv = uv.detach()
         self.last_depth = depth.detach()
+        self.last_xyz = self.get_attribute("xyz").detach()
 
         if save_imgs:
             os.makedirs(os.path.join(self.dir, "images"), exist_ok=True)
@@ -335,10 +405,11 @@ class SimpleGaussian:
             num_in_line = line_xyz.shape[0]
             self.traj_xyz = torch.cat([self.traj_xyz, line_xyz], dim=0)
             num_total = self.traj_xyz.shape[0]
+            # print(num_total)
 
-            self.traj_scale = torch.ones((num_total, 3), device=self.device).float() * point_scale
+            self.traj_scale = torch.ones((num_total, 3), device=self.device).float() * 1e-6 # too big will cause memory overflow
 
-            self.traj_rotate = torch.ones((num_total, 4), device=self.device).float()
+            self.traj_rotate = torch.tensor([1, 0, 0, 0], device=self.device).repeat(num_total, 1).float()
 
             # gradually fade out the opacity
             self.traj_opacity *= alpha
@@ -350,7 +421,6 @@ class SimpleGaussian:
             # self.point_rgb = self.last_traj_rgb
 
             self.last_traj_xyz = self.get_attribute("xyz")[traj_index].to(self.device).float()
-
         input_group = [
             self.get_attribute("xyz"),
             self.get_attribute("scale"),
@@ -590,19 +660,6 @@ class SimpleGaussian:
 
         self.optimizer = torch.optim.Adam(list(self._attributes.values()), lr=self.lr)
 
-        # self.opacities.requires_grad_(True)
-        # optimizable_tensors = self.cat_tensors_to_optimizer(d)
-        # self.means = optimizable_tensors["means"]
-        # self.scales = optimizable_tensors["scales"]
-        # self.rgbs = optimizable_tensors["rgbs"]
-        # self.opacities = optimizable_tensors["opacities"]
-        # self.quats = optimizable_tensors["quats"]
-        # self.opacities.requires_grad_(False)
-
-        # self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device=self.device)
-        # self.denom = torch.zeros((self.get_xyz.shape[0], 1), device=self.device)
-        # self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device=self.device)
-
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
@@ -654,15 +711,23 @@ if __name__ == "__main__":
     torch.manual_seed(seed)
     
     # img = imageio.imread("./data/stanford-bunny.jpg") # H, W, C
-    img = imageio.imread("./data/face.png") # H, W, C
+    # img = imageio.imread("./data/face.png") # H, W, C
+    img = imageio.imread("./images/car-turn/car-turn/00000.jpg") # H, W, C
     img = img.astype(np.float32) / 255.0
-    gt = torch.from_numpy(img).cuda().permute(2, 0, 1) # C, H, W
+    gt_image = torch.from_numpy(img).cuda().permute(2, 0, 1) # C, H, W
     
-    C, H, W = gt.shape 
+    depth = imageio.imread("./images/car-turn/car-turn/00000.jpg") # H, W, C
+    depth = depth.astype(np.float32) / 255.0
+    gt_depth = torch.from_numpy(depth).cuda().permute(2, 0, 1) # C, H, W
+    gt_depth = gt_depth.mean(dim=0, keepdim=True)
+    print(gt_image.shape, gt_depth.shape)
     
-    gaussians = SimpleGaussian(gt_image=gt.permute(1, 2, 0), num_points=10000, depth_scale=1.) # H, W, C
-    gaussians.train(iterations=1000, lr=1e-2, lambda_depth=0.1, 
-                    save_imgs=True, save_videos=True, save_ckpt=True, 
+    C, H, W = gt_image.shape 
+    
+    gaussians = SimpleGaussian(gt_image=gt_image.permute(1, 2, 0), gt_depth=gt_depth.permute(1,2,0), num_points=10000, depth_scale=10.) # H, W, C
+    gaussians.init_gaussians_from_image(gt_image=gt_image.permute(1, 2, 0), gt_depth=gt_depth.permute(1,2,0), num_points=10000, t3=gaussians.t3)
+    gaussians.train(iterations=500, lr=1e-2, lambda_depth=0.01, 
+                    save_imgs=True, save_videos=True, save_ckpt=False, 
                     ckpt_name="ckpt", 
-                    densify_interval=500, densify_times=1, grad_threshold=5e-6, mask=None)
+                    densify_interval=500, densify_times=0, grad_threshold=5e-6, mask=None)
     
