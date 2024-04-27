@@ -13,6 +13,8 @@ import render
 import cv2
 import matplotlib
 import geometry
+from io import BytesIO
+import json
 
 class SimpleGaussian:
     def __init__(self, gt_image, gt_depth=None, num_points=100000, background="black", depth_scale=1.):
@@ -46,6 +48,8 @@ class SimpleGaussian:
             "opacity":  torch.rand((N, 1), dtype=torch.float32).cuda(),
             "rgb":      torch.rand((N, 3), dtype=torch.float32).cuda()
         }
+
+        # self._origin_attributes = {}
         
         self._activations = {
             "scale": lambda x: torch.abs(x) + 1e-8,
@@ -152,6 +156,27 @@ class SimpleGaussian:
         except:
             raise ValueError(f"Attribute or activation for {name} is not VALID!")
     
+    def get_splat_buffer(self):
+        sorted_indices = np.argsort(-np.prod(self.get_attribute("scale").detach().cpu().numpy(), axis=1) / (1 + np.exp(-self.get_attribute("opacity").detach().cpu().T.numpy())))
+        buffer = BytesIO()
+        for idx in sorted_indices[0]:
+            position = self.get_attribute("xyz")[idx].detach().cpu().numpy()
+            scales = self.get_attribute("scale")[idx].detach().cpu().numpy()
+            rot = self.get_attribute("rotate")[idx].detach().cpu().numpy()
+            color = self.get_attribute("rgb")[idx].detach().cpu().numpy()
+            color = np.append(color, 1 / (1 + np.exp(-self.get_attribute("opacity")[idx].detach().cpu().numpy())))
+            buffer.write(position.astype(np.float32).tobytes())
+            buffer.write(scales.astype(np.float32).tobytes())
+            buffer.write((color * 255).clip(0, 255).astype(np.uint8).tobytes())
+            buffer.write((rot * 128 + 128).clip(0, 255).astype(np.uint8).tobytes())
+        return buffer.getvalue()
+
+    def save_camera_json(self, file_name):
+        camera_json = utils.extract_camera_parameters(self.intr, self.extr)
+        with open(file_name, "w") as f:
+            json.dump(camera_json, f)
+
+
     def save_checkpoint(self, ckpt_name=None):
         checkpoint = {
             "attributes": self._attributes,
@@ -164,6 +189,13 @@ class SimpleGaussian:
         os.makedirs(os.path.join(self.dir, "ckpt"), exist_ok=True)
         self.checkpoint_path = os.path.join(self.dir, "ckpt", f"{ckpt_name}.tar")
         torch.save(checkpoint, self.checkpoint_path)
+        splat_data = self.get_splat_buffer()
+        os.makedirs(os.path.join(self.dir, "splat"), exist_ok=True)
+        self.splat_file_path = os.path.join(self.dir, "splat", f"{ckpt_name}.splat")
+        utils.save_splat_file(splat_data, self.splat_file_path)
+        os.makedirs(os.path.join(self.dir, "json"), exist_ok=True)
+        self.json_file_path = os.path.join(self.dir, "json", f"{ckpt_name}.json")
+        self.save_camera_json(self.json_file_path)
 
     def load_checkpoint(self, checkpoint_path):
         checkpoint = torch.load(checkpoint_path)
