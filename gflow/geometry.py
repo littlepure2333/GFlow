@@ -9,6 +9,42 @@ import numpy as np
 
 import math
 
+
+
+def xy_grid(W, H, device=None, origin=(0, 0), unsqueeze=None, cat_dim=-1, homogeneous=False, **arange_kw):
+    """ Output a (H,W,2) array of int32 
+        with output[j,i,0] = i + origin[0]
+             output[j,i,1] = j + origin[1]
+    """
+    if device is None:
+        # numpy
+        arange, meshgrid, stack, ones = np.arange, np.meshgrid, np.stack, np.ones
+    else:
+        # torch
+        arange = lambda *a, **kw: torch.arange(*a, device=device, **kw)
+        meshgrid, stack = torch.meshgrid, torch.stack
+        ones = lambda *a: torch.ones(*a, device=device)
+
+    tw, th = [arange(o, o+s, **arange_kw) for s, o in zip((W, H), origin)]
+    grid = meshgrid(tw, th, indexing='xy')
+    if homogeneous:
+        grid = grid + (ones((H, W)),)
+    if unsqueeze is not None:
+        grid = (grid[0].unsqueeze(unsqueeze), grid[1].unsqueeze(unsqueeze))
+    if cat_dim is not None:
+        grid = stack(grid, cat_dim)
+    return grid
+
+
+
+def depth_to_pts3d(depth, xys, focal, pp):
+    pp = pp.unsqueeze(0)
+    focal = focal.unsqueeze(0)
+
+    return torch.cat((depth * (xys - pp) / focal, depth), dim=-1)
+
+
+
 def pix2world(uv, depth, intr, extr):
     """
     convert uv and depth to world coordinates

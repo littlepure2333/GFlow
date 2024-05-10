@@ -1,3 +1,5 @@
+import os
+import json
 import torch
 import torchsnooper
 from PIL import Image
@@ -5,7 +7,7 @@ import torchvision.transforms as transforms
 from typing import Literal
 import matplotlib
 import numpy as np
-
+import cv2
 
 def image_path_to_tensor(image_path, resize: int = None, blur: bool = False, blur_sigma: float = 5.0, blur_kernel_size: int = 7):
     img = Image.open(image_path) # the range is [0,1] by Image.open
@@ -22,6 +24,45 @@ def image_path_to_tensor(image_path, resize: int = None, blur: bool = False, blu
     # img_tensor = resize_by_divide(img_tensor, 16)
 
     return img_tensor
+
+def read_depth(depth_path, resize=None):
+    depth = np.load(depth_path)
+    depth_tensor = torch.tensor(depth, dtype=torch.float32)
+    # resize the depth
+    if resize is not None:
+        transform = transforms.Resize(resize, antialias=True)
+        depth_tensor = transform(depth_tensor)
+    # print("depth_tensor.shape", depth_tensor.shape)
+    # print("depth_tensor.min()", depth_tensor.min())
+    # print("depth_tensor.max()", depth_tensor.max())
+    return depth_tensor
+
+def read_camera(camera_paths):
+    """
+    read focal, principle points, and camera pose
+    """
+    focal_list = []
+    pose_list = []
+    pp = None
+    for camera_path in camera_paths:
+        with open(camera_path, "r") as f:
+            camera_dict = json.load(f)
+        focal_list.append(camera_dict["focal"])
+        pose_list.append(camera_dict["pose"][:3])
+        pp = [round(camera_dict["pp"][0]), round(camera_dict["pp"][1])]
+    
+    # focal = np.array(focal_list).mean()
+    focal = np.array(focal_list[0]).mean()
+    # print(type(focal))
+    # print(focal.shape)
+    # print(focal)
+    pose_list = np.array(pose_list)
+    # print(pose_list.shape)
+    # print(pose_list[0])
+    # print(focal)
+    # print(pp)
+
+    return focal.item(), pp, pose_list
 
 @torchsnooper.snoop()
 def camera2world(uvd, intr, extr):
@@ -174,44 +215,3 @@ def gen_line_set(xyz1, xyz2, rgb, device):
     point_set_scale = torch.stack(point_set_scale).to(device)
 
     return line_set_xyz, line_set_rgb
-
-def save_splat_file(splat_data, output_path):
-    with open(output_path, "wb") as f:
-        f.write(splat_data)
-    print("Data written to {}".format(output_path))
-
-def extract_camera_parameters(intrinsic_matrix, extrinsic_matrix):
-    # Extract focal lengths and principal point from the intrinsic matrix
-    [fx, fy, cx, cy] = intrinsic_matrix.detach().cpu().numpy().tolist()
-
-    # Extract rotation matrix and translation vector from the extrinsic matrix
-    R = extrinsic_matrix[:, :3]
-    print(R)
-    t = extrinsic_matrix[:, 3]
-
-    # Calculate camera position in world coordinates
-    camera_position = -np.linalg.inv(R.detach().cpu().numpy()).dot(t.detach().cpu().numpy())
-
-    # Return all extracted parameters
-    return [{
-        "id": 0,
-        "img_name": "00001",
-        "width": 1959,
-        "height": 1090,
-        "position": camera_position.tolist(),
-        "rotation": R.tolist(),
-        "fx": fx,
-        "fy": fy
-    }]
-
-def construct_list_of_attributes():
-    l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
-    # All channels except the 3 DC
-    for i in range(3):
-        l.append('f_dc_{}'.format(i))
-    l.append('opacity')
-    for i in range(3):
-        l.append('scale_{}'.format(i))
-    for i in range(4):
-        l.append('rot_{}'.format(i))
-    return l

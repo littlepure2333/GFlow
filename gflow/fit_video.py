@@ -1,6 +1,6 @@
 from typing import Optional
 from pathlib import Path
-from utils import image_path_to_tensor
+from utils import image_path_to_tensor, read_depth, read_camera
 from trainer import SimpleGaussian
 import os
 import tyro
@@ -10,7 +10,7 @@ import numpy as np
 from typing import Literal
 from helper import readFlow
 
-
+# TODO background augmentation
 
 def main(
     height: int = 256,
@@ -32,6 +32,7 @@ def main(
     gpu: int = 0,
     ckpt_path: Optional[str] = None,
     lambda_depth: float = 0.,
+    lambda_still: float = 0.,
     lambda_delta: float = 0.,
     lambda_mov: float = 0.,
     lambda_rig: float = 0.,
@@ -57,6 +58,7 @@ def main(
     loss_verbose: bool = False,
     add: bool = False,
     depth_scale: float = 16.0,
+    depth_offset: float = 2.0,
     num_knn: int = 20,
     slow_color: bool = False,
     slow_means: bool = False,
@@ -68,18 +70,31 @@ def main(
     frames_sequence = []
     frames_center_sequence = []
     frames_depth_sequence = []
+    frames_still_sequence = []
+    frames_still_center_sequence = []
+    frames_move_sequence = []
+    frames_move_center_sequence = []
 
     # read all images(png, jpg, ...) in the folder and sort them
     img_paths = sorted(Path(sequence_path).glob("*.png")) + sorted(Path(sequence_path).glob("*.jpg"))
     if frame_range == -1:
         frame_range = len(img_paths)
-    img_depth_paths = sorted(Path(str(sequence_path)+'_depth').glob("*.png")) + sorted(Path(str(sequence_path)+'_depth').glob("*.jpg"))
+    img_depth_paths = sorted(Path(str(sequence_path)+'_depth_dust3r').glob("*.npy"))
+    # img_depth_paths = sorted(Path(str(sequence_path)+'_depth_ZoeDepth').glob("*.npy"))
+    # img_depth_paths = sorted(Path(str(sequence_path)+'_depth').glob("*.png")) + sorted(Path(str(sequence_path)+'_depth').glob("*.jpg"))
     img_paths = img_paths[frame_start:frame_start+frame_range][::skip_interval]
     img_depth_paths = img_depth_paths[frame_start:frame_start+frame_range][::skip_interval]
     img_occ_paths = sorted(Path(str(sequence_path)+'_flow').glob("*occ_bwd.png")) + sorted(Path(str(sequence_path)+'_flow').glob("*occ_bwd.jpg"))
     img_occ_paths = img_occ_paths[frame_start:frame_start+frame_range-1][::skip_interval]
     flow_paths = sorted(Path(str(sequence_path)+'_flow').glob("*pred.flo"))
     flow_paths = flow_paths[frame_start:frame_start+frame_range-1][::skip_interval]
+    camera_paths = sorted(Path(str(sequence_path)+'_camera_dust3r').glob("*.json"))
+    camera_paths = camera_paths[frame_start:frame_start+frame_range-1][::skip_interval]
+    focal, pp, extr_list = read_camera(camera_paths)
+    # print(focal)
+    # print(pp)
+    # print(extr_list[0])
+    
 
     # gt_images = [image_path_to_tensor(img_path, resize=resize, blur=blur) for img_path in img_paths]
     # gt_depths = [image_path_to_tensor(img_depth_path, resize=resize, blur=blur) / 255.0  for img_depth_path in img_depth_paths]
@@ -88,12 +103,18 @@ def main(
     # frame0 = gt_images[0]
     save_name0 = os.path.basename(img_paths[0]).split('.')[0]
     gt_image0 = image_path_to_tensor(img_paths[0], resize=resize, blur=blur)
-    gt_depth0 = image_path_to_tensor(img_depth_paths[0], resize=resize, blur=blur)
+    # gt_depth0 = image_path_to_tensor(img_depth_paths[0], resize=resize, blur=blur)
+    gt_depth0 = read_depth(img_depth_paths[0], resize=resize).unsqueeze(-1)
 
-    trainer = SimpleGaussian(gt_image=gt_image0, gt_depth=gt_depth0, num_points=num_points, background=background, depth_scale=depth_scale)
-    trainer.init_gaussians_from_image(gt_image=gt_image0, gt_depth=gt_depth0, num_points=num_points, t3=trainer.t3)
-    frames, frames_center, frames_depth = trainer.train(
+    trainer = SimpleGaussian(gt_image=gt_image0, gt_depth=gt_depth0, 
+                             num_points=num_points, background=background, 
+                             depth_scale=depth_scale, depth_offset=depth_offset)
+    trainer.load_camera(focal, pp)
+    # trainer.load_camera(focal, pp, extr_list[0])
+    trainer.init_gaussians_from_image(gt_image=gt_image0, gt_depth=gt_depth0, num_points=num_points)
+    frames, frames_center, frames_depth, still_rgb_np, still_center_np, move_rgb_np, move_center_np = trainer.train(
         iterations=iterations_first,
+        # lr=0.,
         lr=lr,
         # lr_rgbs=lr_rgbs,
         lr_camera=lr_camera,
@@ -113,6 +134,11 @@ def main(
     frames_sequence.append(frames[-1])
     frames_center_sequence.append(frames_center[-1])
     frames_depth_sequence.append(frames_depth[-1])
+    if still_rgb_np is not None:
+        frames_still_sequence.append(still_rgb_np)
+        frames_still_center_sequence.append(still_center_np)
+        frames_move_sequence.append(move_rgb_np)
+        frames_move_center_sequence.append(move_center_np)
 
     # fit the subsequent frames
     # for img_path in img_paths[1:]:
@@ -121,18 +147,19 @@ def main(
         print(f"[{i+1}/{len(img_paths) - 1}] fitting {img_path}")
         trainer.load_checkpoint(trainer.checkpoint_path)
         gt_image = image_path_to_tensor(img_path, resize=resize, blur=blur)
-        gt_depth = image_path_to_tensor(img_depth_paths[i+1], resize=resize, blur=blur)
+        # gt_depth = image_path_to_tensor(img_depth_paths[i+1], resize=resize, blur=blur)
+        gt_depth = read_depth(img_depth_paths[i+1], resize=resize).unsqueeze(-1)
         occ_mask = image_path_to_tensor(img_occ_paths[i], resize=resize, blur=blur)
         gt_flow = readFlow(flow_paths[i], resize=resize, blur=blur)
         # transform 1 is near to 0 is near
-        gt_depth = 1 - gt_depth
+        # gt_depth = (1 - gt_depth) * depth_scale + depth_offset
         trainer.set_gt_image(gt_image)
         trainer.set_gt_depth(gt_depth)
         trainer.set_gt_flow(gt_flow)
 
         if camera_first:
             print(f"[{i+1}/{len(img_paths) - 1}] fitting camera-only first.................")
-            frames, frames_center, frames_depth = trainer.train(
+            frames, frames_center, frames_depth, still_rgb_np, still_center_np, move_rgb_np, move_center_np = trainer.train(
                 iterations=iterations_camera,
                 lr=0.,
                 # lr_rgbs=lr_rgbs,
@@ -142,10 +169,14 @@ def main(
                 save_ckpt=True,
                 ckpt_name=save_name,
                 lambda_depth=lambda_depth,
+                # lambda_depth=0.,
                 lambda_var=lambda_var,
+                lambda_still=0.,
+                lambda_flow=0.,
                 densify_times=densify_times,
                 densify_interval=densify_interval,
                 grad_threshold=grad_threshold,
+                camera_only=True,
             )
             frames_sequence_optimize += frames
             frames_center_sequence_optimize += frames_center
@@ -164,17 +195,20 @@ def main(
             print(f"[{i+1}/{len(img_paths) - 1}] Optimize all .................")
             if add:
                 trainer.add_gaussians_from_image(gt_image=gt_image, gt_depth=gt_depth, mask=occ_mask)
-            frames, frames_center, frames_depth = trainer.train(
+            frames, frames_center, frames_depth, still_rgb_np, still_center_np, move_rgb_np, move_center_np = trainer.train(
                 iterations=iterations_after,
                 lr=lr_after,
-                lr_camera=0.,
+                lr_camera=lr_camera_after,
+                # lr_camera=0.,
                 save_imgs=True,
                 save_videos=False,
                 save_ckpt=True,
                 ckpt_name=save_name,
                 # fps=fps,
+                # lambda_depth=0.,
                 lambda_depth=lambda_depth,
                 lambda_var=lambda_var,
+                lambda_still=lambda_still,
                 lambda_flow=lambda_flow,
                 densify_times=densify_times_after,
                 densify_interval=densify_interval_after,
@@ -202,12 +236,17 @@ def main(
         frames_sequence.append(frames[-1])
         frames_center_sequence.append(frames_center[-1])
         frames_depth_sequence.append(frames_depth[-1])
+        if still_rgb_np is not None:
+            frames_still_sequence.append(still_rgb_np) 
+            frames_still_center_sequence.append(still_center_np)
+            frames_move_sequence.append(move_rgb_np)
+            frames_move_center_sequence.append(move_center_np)
     
     # generate video
     for name, frames, fps in zip(
-        ["sequence", "sequence_center", "sequence_depth", "sequence_optimize", "sequence_center_optimize", "sequence_depth_optimize"],
-        [frames_sequence, frames_center_sequence, frames_depth_sequence, frames_sequence_optimize, frames_center_sequence_optimize, frames_depth_sequence_optimize],
-        [5, 5, 5, 30, 30, 30]):
+        ["sequence", "sequence_center", "sequence_depth", "sequence_optimize", "sequence_center_optimize", "sequence_depth_optimize", "sequence_still", "sequence_still_center", "sequence_move", "sequence_move_center"],
+        [frames_sequence, frames_center_sequence, frames_depth_sequence, frames_sequence_optimize, frames_center_sequence_optimize, frames_depth_sequence_optimize, frames_still_sequence, frames_still_center_sequence, frames_move_sequence, frames_move_center_sequence],
+        [5, 5, 5, 30, 30, 30, 5, 5, 5, 5]):
 
         mp4_path = os.path.join(trainer.dir, f"{name}.mp4")
         save_video(mp4_path, frames, fps)

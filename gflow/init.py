@@ -15,6 +15,7 @@ sys.path.append('/home/wangshizun/projects/gsplat/depth_anything')
 from torchvision.transforms import Compose
 import torch.nn.functional as F
 import tyro
+from geometry import xy_grid
 
 def resize_by_divide(image, divider=16):
     # image is tensor of shape (H, W, C)
@@ -101,6 +102,64 @@ def k_nearest_sklearn(x: torch.Tensor, k: int):
     return distances[:, 1:].astype(np.float32), indices[:, 1:].astype(np.float32)
     # return shape are [num_samples, k]
 
+def image_sampling(gt_image, gt_depth, num_points=5000, device='cpu', mask=None):
+    # gt_image: (H, W, 3) range: [0, 1]
+    # gt_depth: (H, W), range: [0, 1]
+    # read the image
+    image = gt_image.cpu().numpy()*255
+    H, W = image.shape[:2]
+
+    # convert the image to grayscale
+    gray_image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+
+    # compute the gradient of the image
+    gradient_x = cv2.Sobel(gray_image, cv2.CV_64F, 1, 0, ksize=3)
+    gradient_y = cv2.Sobel(gray_image, cv2.CV_64F, 0, 1, ksize=3)
+    gradient_magnitude = np.sqrt(gradient_x**2 + gradient_y**2)
+
+    # add uniform magnitude to the gradient magnitude, to avoid zero probability
+    gradient_magnitude = gradient_magnitude + np.min(gradient_magnitude[gradient_magnitude>0])
+
+    if mask is not None:
+        gradient_magnitude = gradient_magnitude * mask.squeeze().numpy()
+
+
+    # mediate the gradient magnitude
+    probability_distribution = gradient_magnitude / np.sum(gradient_magnitude)
+
+    # sample points from the probability distribution
+    sampled_points = np.random.choice(np.arange(gray_image.size), size=num_points, p=probability_distribution.flatten())
+
+    # convert the sampled points to coordinates on the image
+    sampled_coordinates = np.unravel_index(sampled_points, gray_image.shape)
+
+    # generate xy_grid
+    xys = xy_grid(W, H)
+    print(xys.shape)
+    print(xys[...,0].min(), xys[...,0].max())
+    print(xys[...,1].min(), xys[...,1].max())
+    print("--------------")
+
+    # convert the image to PIL format
+    if gt_depth is None:
+        gt_depth = depth_estimate(gt_image, device=device)
+        gt_depth = gt_depth.unsqueeze(-1)
+
+    XY = image.shape[:2][::-1]
+    # xys = np.array(sampled_coordinates).T
+    xys = np.array(sampled_coordinates).T[:,::-1].copy()
+    xys_norm = (xys / np.array(XY) - 0.5) * 2
+
+    depths_norm = gt_depth[sampled_coordinates]
+
+    scales = 1 / probability_distribution[sampled_coordinates]
+    scales_norm = scales / np.max(scales)
+
+    rgbs = image[sampled_coordinates]
+    rgbs_norm = rgbs / 255.
+
+    return xys, depths_norm, scales_norm, rgbs_norm, gt_depth
+
 def complex_texture_sampling(gt_image, gt_depth, num_points=5000, device='cpu', mask=None):
     # gt_image: (H, W, 3) range: [0, 1]
     # gt_depth: (H, W), range: [0, 1]
@@ -151,14 +210,22 @@ def complex_texture_sampling(gt_image, gt_depth, num_points=5000, device='cpu', 
 
     XY = image.shape[:2][::-1]
     # xys = np.array(sampled_coordinates).T
-    xys = np.array(sampled_coordinates).T[:,::-1].copy()
+    xys = np.array(sampled_coordinates).T[:,::-1].copy() # (num_points, 2) 2 is x, y, corresponding to W, H
+    # print(xys.shape)
+    # print(xys[:,0].min(), xys[:,0].max())
+    # print(xys[:,1].min(), xys[:,1].max())
+    # print("--------------")
+
     xys_norm = (xys / np.array(XY) - 0.5) * 2
     '''
     for depthAnything, 1 is near, 0 is far!!!
     '''
     # transform 1 is near to 0 is near
-    gt_depth =  1 - gt_depth
+    # gt_depth =  1 - gt_depth
+    # print(gt_depth.shape)
+    # print(gt_depth.max(), gt_depth.min())
     depths_norm = gt_depth[sampled_coordinates]
+    # print(depths_norm.shape)
     # depths_norm = img_depth_gt[sampled_coordinates][:,None]
     # depths_norm = (img_depth_gt[sampled_coordinates][:,None] - 0.5) * 2
     # print("depth_norm.shape", depth_norm.shape)
@@ -169,7 +236,8 @@ def complex_texture_sampling(gt_image, gt_depth, num_points=5000, device='cpu', 
     # else:
     #     scales = 1 / probability_distribution[sampled_coordinates]
     scales = 1 / probability_distribution[sampled_coordinates]
-    scales_norm = scales / np.max(scales)
+    # scales_norm = (1 / H) * (scales / np.max(scales))
+    scales_norm = 0.5 * scales / np.max(scales)
     # scales_norm = np.clip(scales_norm, 0.001, np.inf)
     # scales_norm = scales_norm * (0.002 * H * W / num_points)
     # bgrs = image[sampled_coordinates]
