@@ -203,3 +203,15 @@ def extract_camera_parameters(intrinsic_matrix, extrinsic_matrix):
         "fx": fx,
         "fy": fy
     }]
+
+def construct_list_of_attributes():
+    l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
+    # All channels except the 3 DC
+    for i in range(3):
+        l.append('f_dc_{}'.format(i))
+    l.append('opacity')
+    for i in range(3):
+        l.append('scale_{}'.format(i))
+    for i in range(4):
+        l.append('rot_{}'.format(i))
+    return l

@@ -15,6 +15,7 @@ import matplotlib
 import geometry
 from io import BytesIO
 import json
+from plyfile import PlyData, PlyElement
 
 class SimpleGaussian:
     def __init__(self, gt_image, gt_depth=None, num_points=100000, background="black", depth_scale=1.):
@@ -171,6 +172,19 @@ class SimpleGaussian:
             buffer.write((rot * 128 + 128).clip(0, 255).astype(np.uint8).tobytes())
         return buffer.getvalue()
 
+    def get_ply_elements(self):
+        dtype_full = [(attribute, 'f4') for attribute in utils.construct_list_of_attributes()]
+        elements = np.empty(self.get_attribute("xyz").shape[0], dtype=dtype_full)
+        for idx in range(self.get_attribute("xyz").shape[0]):
+            xyz = self.get_attribute("xyz")[idx].detach().cpu().numpy()
+            normals = np.zeros_like(xyz)
+            f_dc = (self.get_attribute("rgb")[idx].detach().cpu().numpy()-0.5)/0.28209479177387814
+            opacities = self.get_attribute("opacity")[idx].detach().cpu().numpy()
+            scales = np.log(self.get_attribute("scale")[idx].detach().cpu().numpy())
+            rot = self.get_attribute("rotate")[idx].detach().cpu().numpy()
+            elements[idx] = (xyz[0], xyz[1], xyz[2], normals[0], normals[1], normals[2], f_dc[0], f_dc[1], f_dc[2], opacities, scales[0], scales[1], scales[2], rot[0], rot[1], rot[2], rot[3])
+        return elements
+
     def save_camera_json(self, file_name):
         camera_json = utils.extract_camera_parameters(self.intr, self.extr)
         with open(file_name, "w") as f:
@@ -193,6 +207,10 @@ class SimpleGaussian:
         os.makedirs(os.path.join(self.dir, "splat"), exist_ok=True)
         self.splat_file_path = os.path.join(self.dir, "splat", f"{ckpt_name}.splat")
         utils.save_splat_file(splat_data, self.splat_file_path)
+        os.makedirs(os.path.join(self.dir, "ply"), exist_ok=True)
+        self.ply_file_path = os.path.join(self.dir, "ply", f"{ckpt_name}.ply")
+        ply_elements = self.get_ply_elements()
+        ply_data = PlyData([PlyElement.describe(ply_elements, 'vertex')], text=True)
         os.makedirs(os.path.join(self.dir, "json"), exist_ok=True)
         self.json_file_path = os.path.join(self.dir, "json", f"{ckpt_name}.json")
         self.save_camera_json(self.json_file_path)
