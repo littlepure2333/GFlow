@@ -188,7 +188,8 @@ def main(
             print("[check] scales' max, min", trainer.get_attribute("scale").max().item(), trainer.get_attribute("scale").min().item())
             print("[check] depth_scale", trainer.depth_scale)
             print("[check] depth far, near", trainer.last_depth[trainer.last_depth>0].max(), trainer.last_depth[trainer.last_depth>0].min())
-            print("[check] camera extr\n", trainer.extr)
+            print("[check] camera intr: \n", trainer.intr)
+            print("[check] camera extr: \n", trainer.extr)
 
         if iterations_after > 0:
             # print(f"[{i+1}/{len(img_paths) - 1}] Rehearshal stage for new points.................")
@@ -223,7 +224,8 @@ def main(
         print("[check] scales' max, min", trainer.get_attribute("scale").max().item(), trainer.get_attribute("scale").min().item())
         print("[check] depth_scale", trainer.depth_scale)
         print("[check] depth far, near", trainer.last_depth[trainer.last_depth>0].max(), trainer.last_depth[trainer.last_depth>0].min())
-        print("[check] camera extr\n", trainer.extr)
+        print("[check] camera intr: \n", trainer.intr)
+        print("[check] camera extr: \n", trainer.extr)
         # print("[check] scales.max", trainer.get_attribute("scale").max())
         # print("[check] scales.min", trainer.get_attribute("scale").min())
         # print("[check] far depth", trainer.prev_depth_abs[trainer.prev_depth_abs>0].max())

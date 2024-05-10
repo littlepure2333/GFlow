@@ -215,3 +215,44 @@ def gen_line_set(xyz1, xyz2, rgb, device):
     point_set_scale = torch.stack(point_set_scale).to(device)
 
     return line_set_xyz, line_set_rgb
+
+def save_splat_file(splat_data, output_path):
+    with open(output_path, "wb") as f:
+        f.write(splat_data)
+    print("Data written to {}".format(output_path))
+
+def extract_camera_parameters(intrinsic_matrix, extrinsic_matrix):
+    # Extract focal lengths and principal point from the intrinsic matrix
+    [fx, fy, cx, cy] = intrinsic_matrix.detach().cpu().numpy().tolist()
+
+    # Extract rotation matrix and translation vector from the extrinsic matrix
+    R = extrinsic_matrix[:, :3]
+    print(R)
+    t = extrinsic_matrix[:, 3]
+
+    # Calculate camera position in world coordinates
+    camera_position = -np.linalg.inv(R.detach().cpu().numpy()).dot(t.detach().cpu().numpy())
+
+    # Return all extracted parameters
+    return [{
+        "id": 0,
+        "img_name": "00001",
+        "width": 1959,
+        "height": 1090,
+        "position": camera_position.tolist(),
+        "rotation": R.tolist(),
+        "fx": fx,
+        "fy": fy
+    }]
+
+def construct_list_of_attributes():
+    l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
+    # All channels except the 3 DC
+    for i in range(3):
+        l.append('f_dc_{}'.format(i))
+    l.append('opacity')
+    for i in range(3):
+        l.append('scale_{}'.format(i))
+    for i in range(4):
+        l.append('rot_{}'.format(i))
+    return l

@@ -138,7 +138,7 @@ class SimpleGaussian:
         if extr is not None:
             self.extr = torch.tensor(extr, dtype=torch.float32).to(self.device)
         print("[camera] intr: ", self.intr)
-        print("[camera] extr: ", self.extr)
+        print("[camera] extr: \n", self.extr)
     
     def init_gaussians_from_image(self, gt_image, gt_depth=None, num_points=None):
         # gt_image (H, W, C) in [0, 1]

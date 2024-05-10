@@ -13,3 +13,4 @@ huggingface-hub
 torchsnooper
 matplotlib
 gpustat
+plyfile
