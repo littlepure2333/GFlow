@@ -8,6 +8,13 @@ from typing import Literal
 import matplotlib
 import numpy as np
 import cv2
+from scipy.spatial import ConvexHull
+from alphashape import alphashape
+from skimage import draw
+from descartes import PolygonPatch
+from matplotlib import pyplot as plt
+import concavity
+from concavity.utils import *
 
 def image_path_to_tensor(image_path, resize: int = None, blur: bool = False, blur_sigma: float = 5.0, blur_kernel_size: int = 7):
     img = Image.open(image_path) # the range is [0,1] by Image.open
@@ -25,7 +32,7 @@ def image_path_to_tensor(image_path, resize: int = None, blur: bool = False, blu
 
     return img_tensor
 
-def read_depth(depth_path, resize=None):
+def read_depth(depth_path, resize=None, depth_scale=1.0, depth_offset=0.):
     depth = np.load(depth_path)
     depth_tensor = torch.tensor(depth, dtype=torch.float32)
     # resize the depth
@@ -35,7 +42,7 @@ def read_depth(depth_path, resize=None):
     # print("depth_tensor.shape", depth_tensor.shape)
     # print("depth_tensor.min()", depth_tensor.min())
     # print("depth_tensor.max()", depth_tensor.max())
-    return depth_tensor
+    return depth_tensor * depth_scale + depth_offset
 
 def read_camera(camera_paths):
     """
@@ -51,8 +58,8 @@ def read_camera(camera_paths):
         pose_list.append(camera_dict["pose"][:3])
         pp = [round(camera_dict["pp"][0]), round(camera_dict["pp"][1])]
     
-    # focal = np.array(focal_list).mean()
-    focal = np.array(focal_list[0]).mean()
+    focal = np.array(focal_list).mean()
+    # focal = np.array(focal_list[0]).mean()
     # print(type(focal))
     # print(focal.shape)
     # print(focal)
@@ -221,24 +228,26 @@ def save_splat_file(splat_data, output_path):
         f.write(splat_data)
     print("Data written to {}".format(output_path))
 
-def extract_camera_parameters(intrinsic_matrix, extrinsic_matrix):
+def extract_camera_parameters(intrinsic_matrix, extrinsic_matrix, W, H, img_name="00001"):
     # Extract focal lengths and principal point from the intrinsic matrix
     [fx, fy, cx, cy] = intrinsic_matrix.detach().cpu().numpy().tolist()
 
     # Extract rotation matrix and translation vector from the extrinsic matrix
     R = extrinsic_matrix[:, :3]
-    print(R)
+    R = np.linalg.inv(R.detach().cpu().numpy())
+
+    # print(R)
     t = extrinsic_matrix[:, 3]
 
     # Calculate camera position in world coordinates
-    camera_position = -np.linalg.inv(R.detach().cpu().numpy()).dot(t.detach().cpu().numpy())
+    camera_position = R.dot(t.detach().cpu().numpy())
 
     # Return all extracted parameters
     return [{
         "id": 0,
-        "img_name": "00001",
-        "width": 1959,
-        "height": 1090,
+        "img_name": img_name,
+        "width": W,
+        "height": H,
         "position": camera_position.tolist(),
         "rotation": R.tolist(),
         "fx": fx,
@@ -256,3 +265,106 @@ def construct_list_of_attributes():
     for i in range(4):
         l.append('rot_{}'.format(i))
     return l
+
+class ConcaveHull2D:
+    def __init__(self, points, knn=10, sigma=0., num_points_factor=2):
+        """
+        Initialize the AlphaShape class
+
+        Args:
+        points: numpy array, representing the point set, each row is the coordinate of a point, shape is (N, 2)
+        alpha: alpha parameter, controls the shape of the concave hull, the smaller the value, the smoother the boundary
+        """
+        self.points = points
+        self.knn = knn
+
+        # judge if the points are in numpy format, if not, convert them to numpy
+        if isinstance(points, torch.Tensor):
+            self.points = points.detach().cpu().numpy()
+        
+        # calculate concave hull
+        self.hull = concavity.concave_hull(self.points, self.knn)
+
+        if sigma > 0:
+            self.hull = concavity.gaussian_smooth_geom(self.hull, sigma=sigma, num_points_factor=num_points_factor)
+    
+    def area(self):
+        """
+        return the area of the concave hull
+        """
+        return self.hull.area
+    
+    def mask(self, width, height):
+        """
+        Return the mask of the concave hull
+        
+        Args:
+        width: int, the width of the mask
+        height: int, the height of the mask
+        
+        Returns:
+        mask: numpy array, representing the segmentation mask of the concave hull, shape is (height, width), where True indicates inside the concave hull and False indicates outside
+        """
+        mask = polygon_to_mask(self.hull, width, height)
+
+        return mask
+
+
+class ConvexHull2D:
+    def __init__(self, points):
+        self.points = points
+
+       # judge if the points are in numpy format, if not, convert them to numpy
+        if isinstance(points, torch.Tensor):
+            self.points = points.detach().cpu().numpy()
+        
+        # calculate the convex hull
+        self.hull = ConvexHull(self.points)
+    
+    def area(self):
+        # return the area of the convex hull
+        return self.hull.volume
+    
+    def mask(self, width, height):
+        """ 
+        input: width: int, the width of the mask
+        return: mask: numpy array, representing the segmentation mask of the convex hull, shape is (H, W), where True indicates inside the convex hull and False indicates outside
+        """
+        # create a mask with the same shape as the image
+        mask = np.zeros((width, height), dtype=np.uint8)
+
+        # convert the points to integer
+        points = np.round(self.hull.points[self.hull.vertices]).astype(int)
+
+        # fill the convex hull with white color
+        cv2.fillPoly(mask, [points], color=(1,))
+
+        return mask
+
+def and_with_most_common(set0, set1, set2):
+    """
+    set0, set1, set2 are torch tensor of [N, 2]
+    compare set1 and set2, which got the most common components with set0
+    then return the "and" result between set0 and the most common set
+    """
+
+    # convert to numpy
+    set0 = set0.detach().cpu().numpy()
+    set1 = set1.detach().cpu().numpy()
+    set2 = set2.detach().cpu().numpy()
+
+    # convert to set
+    set0 = set([tuple(x) for x in set0])
+    set1 = set([tuple(x) for x in set1])
+    set2 = set([tuple(x) for x in set2])
+
+    # find the most common set
+    common_set = set1 if len(set0 & set1) > len(set0 & set2) else set2
+
+    # convert to torch tensor
+    common_set = torch.tensor(list(common_set), device=set0.device)
+
+    # find the "and" result
+    and_set = set0 & common_set
+
+    return torch.tensor(list(and_set), device=set0.device)

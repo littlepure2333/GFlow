@@ -236,8 +236,12 @@ def complex_texture_sampling(gt_image, gt_depth, num_points=5000, device='cpu', 
     # else:
     #     scales = 1 / probability_distribution[sampled_coordinates]
     scales = 1 / probability_distribution[sampled_coordinates]
+    # scales = np.ones_like(scales)
     # scales_norm = (1 / H) * (scales / np.max(scales))
-    scales_norm = 0.5 * scales / np.max(scales)
+    # scales_norm = 0.5 * scales / np.max(scales)
+    scales_norm = scales * 100. / np.sum(scales)
+
+    # scales_norm = 1 / num_points
     # scales_norm = np.clip(scales_norm, 0.001, np.inf)
     # scales_norm = scales_norm * (0.002 * H * W / num_points)
     # bgrs = image[sampled_coordinates]

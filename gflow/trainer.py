@@ -6,7 +6,7 @@ import numpy as np
 import imageio
 import msplat
 import utils
-from utils import read_depth
+from utils import read_depth, ConvexHull2D, ConcaveHull2D
 from init import complex_texture_sampling, image_sampling
 from datetime import datetime
 import os
@@ -20,13 +20,12 @@ from plyfile import PlyData, PlyElement
 from sklearn.cluster import KMeans, AgglomerativeClustering
 
 class SimpleGaussian:
-    def __init__(self, gt_image, gt_depth=None, num_points=100000, background="black", depth_scale=1., depth_offset=1.):
+    def __init__(self, gt_image, gt_depth=None, gt_flow=None, num_points=100000, background="black"):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.gt_image = gt_image.to(self.device)
         self.gt_depth = gt_depth.to(self.device) if gt_depth is not None else None
+        self.gt_flow = gt_flow.to(self.device) if gt_flow is not None else None
         self.num_points = num_points
-        self.depth_scale = depth_scale
-        self.depth_offset = depth_offset
         # self.clustering = AgglomerativeClustering(
         #     # distance_threshold=0.1,
         #     linkage='ward', 
@@ -42,19 +41,24 @@ class SimpleGaussian:
         fx = 0.5 * float(W) / math.tan(0.5 * fov)
         fy = 0.5 * float(H) / math.tan(0.5 * fov)
         self.intr = torch.Tensor([fx, fy, float(W) / 2, float(H) / 2]).cuda().float()
-        intr_matrix = torch.Tensor([[fx,  0.0, float(W) / 2],
-                                    [0.0, fy,  float(H) / 2],
-                                    [0.0, 0.0, 1.0         ]]).cuda().float()
+        # intr_matrix = torch.Tensor([[fx,  0.0, float(W) / 2],
+        #                             [0.0, fy,  float(H) / 2],
+        #                             [0.0, 0.0, 1.0         ]]).cuda().float()
         # self.t3 = t3 = 2.5 # translation along z-axis
         self.extr = torch.Tensor([[1.0, 0.0, 0.0, 0.0],
                                   [0.0, 1.0, 0.0, 0.0],
-                                  [0.0, 0.0, 1.0, 0.00 ]]).cuda().float()
+                                  [0.0, 0.0, 1.0, 0.0 ]]).cuda().float()
+        # TODO: using roma to represent rotation quaternion -> SO(3) rotation matrix
+
+
+        # TODO: add scale, shift factor for multi-view consistent depth
         
         N = int(num_points)
         self._attributes = {
             "xyz":      torch.rand((N, 3), dtype=torch.float32).cuda() * 2 - 1,
-            "scale":    torch.rand((N, 3), dtype=torch.float32).cuda(),
-            "rotate":   torch.rand((N, 4), dtype=torch.float32).cuda(),
+            "scale":    torch.rand((N, 1), dtype=torch.float32).cuda(),
+            # "scale":    torch.rand((N, 3), dtype=torch.float32).cuda(),
+            "rotate":   torch.rand((N, 4), dtype=torch.float32).cuda(), # should be a quaternion
             "opacity":  torch.rand((N, 1), dtype=torch.float32).cuda(),
             "rgb":      torch.rand((N, 3), dtype=torch.float32).cuda()
         }
@@ -69,8 +73,8 @@ class SimpleGaussian:
             return (torch.abs(x) + 1e-8).repeat(1, 3)
         
         self._activations = {
-            "scale": lambda x: torch.abs(x) + 1e-8,
-            # "scale": _isotropic,
+            # "scale": lambda x: torch.abs(x) + 1e-8,
+            "scale": _isotropic,
             "rotate": torch.nn.functional.normalize,
             "opacity": torch.sigmoid,
             "rgb": torch.sigmoid
@@ -78,8 +82,8 @@ class SimpleGaussian:
         
         # the inverse of the activation functions
         self._activations_inv = {
-            "scale": lambda x: torch.abs(x),
-            # "scale": lambda x: torch.abs(x)[..., [0]],
+            # "scale": lambda x: torch.abs(x),
+            "scale": lambda x: torch.abs(x)[..., [0]],
             "rotate": torch.nn.functional.normalize,
             "opacity": torch.logit,
             "rgb": torch.logit
@@ -101,7 +105,7 @@ class SimpleGaussian:
         os.system(f"ln -s {abs_directory} logs/0_latest/{now}")
         self.dir = directory
     
-    def add_optimizer(self, lr=1e-2, lr_camera=0., exclude_key="rotate"):
+    def add_optimizer(self, lr=1e-2, lr_camera=0., exclude_key=None, camera_only=False):
         self.lr = lr
         self.lr_camera = lr_camera
         for attribute_name in self._attributes.keys():
@@ -114,6 +118,9 @@ class SimpleGaussian:
             {"params": self._attributes.values(), "lr": lr, "name": "attributes"},
             {"params": self.extr, "lr": lr_camera, "name": "extr"},
         ]
+        # if camera_only:
+        #     self.scale_adapter = nn.Parameter(torch.ones(1).to(self.device)).requires_grad_(True)
+        #     optim_params.append({"params": self.scale_adapter, "lr": lr, "name": "scale_adapter"})
         
         self.optimizer = torch.optim.Adam(optim_params)
     
@@ -127,7 +134,7 @@ class SimpleGaussian:
         self.gt_image = gt_image.to(self.device)
 
     def set_gt_depth(self, gt_depth):
-        self.gt_depth = gt_depth.to(self.device) * self.depth_scale
+        self.gt_depth = gt_depth.to(self.device)
 
     def set_gt_flow(self, gt_flow):
         self.gt_flow = gt_flow.to(self.device)
@@ -149,11 +156,8 @@ class SimpleGaussian:
         # _ = image_sampling(gt_image, gt_depth, num_points=num_points, device=self.device)
         """depths: 0 is near, 1 is far"""
         xys = torch.from_numpy(xys).to(self.device).float()
-        # depths = depths.to(self.device).float() * self.depth_scale + self.depth_offset
-        # self.gt_depth = gt_depth.to(self.device).float() * self.depth_scale + self.depth_offset
-        self.depth_scale = self.intr[0] / 20
-        depths = depths.to(self.device).float() * self.depth_scale
-        self.gt_depth = gt_depth.to(self.device).float() * self.depth_scale
+        depths = depths.to(self.device).float()
+        self.gt_depth = gt_depth.to(self.device).float()
         # print(self.gt_depth.shape)
         # print(self.gt_depth.max())
         # print(xys.shape)
@@ -199,6 +203,9 @@ class SimpleGaussian:
         # opacity = torch.ones((num_points, 1), device=self.device).float() - eps
         # self._attributes["opacity"] = self._activations_inv["opacity"](opacity)
         
+    def current_pts_num(self):
+        return self._attributes["xyz"].shape[0]
+
     def step(self):
         self.optimizer.zero_grad()
         self.optimizer.step()
@@ -240,13 +247,19 @@ class SimpleGaussian:
             elements[idx] = (xyz[0], xyz[1], xyz[2], normals[0], normals[1], normals[2], f_dc[0], f_dc[1], f_dc[2], opacities, scales[0], scales[1], scales[2], rot[0], rot[1], rot[2], rot[3])
         return elements
 
-    def save_camera_json(self, file_name):
-        camera_json = utils.extract_camera_parameters(self.intr, self.extr)
+    def save_camera_json(self, file_name, ckpt_name):
+        camera_json = utils.extract_camera_parameters(self.intr, self.extr, self.W, self.H, ckpt_name)
+        if not hasattr(self, 'camera_json_list'):
+            self.camera_json_list = camera_json
+        else:
+            self.camera_json_list += camera_json
+            self.camera_json_list[-1]["id"] = self.camera_json_list[-2]["id"] + 1
         with open(file_name, "w") as f:
-            json.dump(camera_json, f)
+            json.dump(self.camera_json_list, f, indent=4)
 
 
-    def save_checkpoint(self, ckpt_name=None):
+    def save_checkpoint(self, ckpt_name=None, camera_only=False):
+        # save checkpoint
         checkpoint = {
             "attributes": self._attributes,
             "intr": self.intr,
@@ -258,18 +271,22 @@ class SimpleGaussian:
         os.makedirs(os.path.join(self.dir, "ckpt"), exist_ok=True)
         self.checkpoint_path = os.path.join(self.dir, "ckpt", f"{ckpt_name}.tar")
         torch.save(checkpoint, self.checkpoint_path)
-        splat_data = self.get_splat_buffer()
-        os.makedirs(os.path.join(self.dir, "splat"), exist_ok=True)
-        self.splat_file_path = os.path.join(self.dir, "splat", f"{ckpt_name}.splat")
-        utils.save_splat_file(splat_data, self.splat_file_path)
-        os.makedirs(os.path.join(self.dir, "ply"), exist_ok=True)
-        self.ply_file_path = os.path.join(self.dir, "ply", f"{ckpt_name}.ply")
-        ply_elements = self.get_ply_elements()
-        el = PlyElement.describe(ply_elements, 'vertex')
-        PlyData([el]).write(self.ply_file_path)
-        os.makedirs(os.path.join(self.dir, "json"), exist_ok=True)
-        self.json_file_path = os.path.join(self.dir, "json", f"{ckpt_name}.json")
-        self.save_camera_json(self.json_file_path)
+        if not camera_only:
+            # save splat file
+            splat_data = self.get_splat_buffer()
+            os.makedirs(os.path.join(self.dir, "splat"), exist_ok=True)
+            self.splat_file_path = os.path.join(self.dir, "splat", f"{ckpt_name}.splat")
+            utils.save_splat_file(splat_data, self.splat_file_path)
+            # save ply file
+            # os.makedirs(os.path.join(self.dir, "ply"), exist_ok=True)
+            # self.ply_file_path = os.path.join(self.dir, "ply", f"{ckpt_name}.ply")
+            # ply_elements = self.get_ply_elements()
+            # el = PlyElement.describe(ply_elements, 'vertex')
+            # PlyData([el]).write(self.ply_file_path)
+            # save camera json file
+            os.makedirs(os.path.join(self.dir, "json"), exist_ok=True)
+            self.json_file_path = os.path.join(self.dir, "json", f"{ckpt_name}.json")
+            self.save_camera_json(self.json_file_path, ckpt_name)
 
     def load_checkpoint(self, checkpoint_path):
         checkpoint = torch.load(checkpoint_path)
@@ -279,10 +296,10 @@ class SimpleGaussian:
         del checkpoint
         torch.cuda.empty_cache()
     
-    def train(self, iterations=500, lr=1e-2, lr_camera=0.,
+    def train(self, iterations=500, lr=1e-2, lr_camera=0., lambda_rgb=1.,
               lambda_depth=0., lambda_flow=0., lambda_var=0., lambda_still=0.,
               save_imgs=False, save_videos=False, save_ckpt=False,
-              ckpt_name="ckpt", densify_interval=500, densify_times=1, 
+              ckpt_name="ckpt", densify_interval=500, densify_times=1, densify_iter=0,
               grad_threshold=5e-3, mask=None, camera_only=False):
         frames = []
         frames_depth = []
@@ -291,17 +308,47 @@ class SimpleGaussian:
         l1_loss = nn.SmoothL1Loss(reduce="none")
         mse_loss = nn.MSELoss()
         mse_loss_pixel = nn.MSELoss(reduction='none')
-        self.add_optimizer(lr, lr_camera, exclude_key="xyz")
-        self.reset_densification_stats()
-        # if hasattr(self, 'last_xyz'): # not the first frame
-            # initial number of gaussians in the training
-            # num_g_init = self.get_attribute("xyz").shape[0] 
-        #     # if If xyz of gaussians present nearly no change compared to last xyz, 
-        #     # we consider them as the still gaussians
-        #     xyz_diff = torch.norm(self.get_attribute("xyz") - self.last_xyz, dim=1)
-        #     print("xyz_diff", xyz_diff.min(), xyz_diff.max())
-        #     still_mask = xyz_diff < 1e-9
-        
+
+        """pre-update prosessing"""
+        if not camera_only and hasattr(self, 'still_mask'):
+            # move the moving part gaussians first
+            # input_group = [
+            #     self.get_attribute("xyz"),
+            #     self.get_attribute("scale"),
+            #     self.get_attribute("rotate"),
+            #     self.get_attribute("opacity"),
+            #     self.get_attribute("rgb"),
+            #     self.intr,
+            #     self.extr,
+            #     self.bg,
+            #     self.W,
+            #     self.H,
+            # ]
+
+            # return_dict = render.render_multiple(
+            #     input_group,
+            #     ["uv"]
+            # )
+            # uv = return_dict["uv"].detach() # (N, 2)
+            
+            # uv_move = uv[:self.last_still_mask.shape[0]][~self.last_still_mask] # (N_move, 2)
+            uv_move = self.last_uv[:self.last_still_mask.shape[0]][~self.last_still_mask] # (N_move, 2)
+            y_coords = uv_move[:,1].long() # (N_move,)
+            x_coords = uv_move[:,0].long() # (N_move,)
+            move_flow = self.last_gt_flow[y_coords, x_coords] # (N_move, 2)
+            uv_move = uv_move + move_flow  # (N_move, 2)
+            y_coords_move = uv_move[:,1].long() # (N_move,)
+            x_coords_move = uv_move[:,0].long() # (N_move,)
+            depth_move = self.gt_depth[y_coords_move, x_coords_move] # (N_move,)
+            xyz_move = geometry.pix2world(uv_move, depth_move, self.intr, self.extr) # (N_move, 3)
+            # assign the new xyz to the moving part
+            xyz = self._attributes["xyz"].clone()
+            xyz[:self.last_still_mask.shape[0]][~self.last_still_mask] = xyz_move.detach()
+            self._attributes["xyz"] = xyz
+
+        self.add_optimizer(lr, lr_camera, exclude_key=None, camera_only=camera_only)
+
+        """iterate the optimization"""
         for iteration in range(0, iterations):
             loss = 0.
 
@@ -325,38 +372,33 @@ class SimpleGaussian:
 
             # render image
             rendered_rgb, uv, depth = return_dict["rgb"], return_dict["uv"], return_dict["depth"]
-            # print("before xy" , self.get_attribute("xyz")[:,:2].min(), self.get_attribute("xyz")[:,:2].max())
-            # print("before z" , self.get_attribute("xyz")[:,2].min(), self.get_attribute("xyz")[:,2].max())
-            # print("before xyz" , self.get_attribute("xyz")[:5])
-            # print("uv", uv.min(), uv.max())
-            # print("depth", depth.min(), depth.max())
-            # print("uv", uv[:5])
-            # print("depth", depth[:5])
-            xyz = geometry.pix2world(uv, depth, self.intr, self.extr)
-            # print("after xy",xyz[:,:2].min(), xyz[:,:2].max())
-            # print("after z",xyz[:,2].min(), xyz[:,2].max())
-            # print("after xyz",xyz[:5])
-            
+
             # render depth map
             rendered_depth_map = return_dict["depth_map"]
-            # print("rendered_depth_map", rendered_depth_map.min(), rendered_depth_map.max())
 
             # render colorful depth map
             rendered_depth_map_color = return_dict["depth_map_color"]
             
             # render center
             rendered_center = return_dict["center"]
+
+            progress_dict = {}
             
-            # loss_rgb = mse_loss(rendered_rgb.permute(1, 2, 0), self.gt_image)
-            loss_rgb_pixel = mse_loss_pixel(rendered_rgb.permute(1, 2, 0), self.gt_image).mean(dim=2)
-            loss_rgb = loss_rgb_pixel.mean()
-            loss += loss_rgb
-            progress_dict = {"rgb": f"{loss_rgb.item():.6f}"}
+            if lambda_rgb > 0:
+                loss_rgb_pixel = mse_loss_pixel(rendered_rgb.permute(1, 2, 0), self.gt_image).mean(dim=2)
+                loss_rgb = loss_rgb_pixel.mean()
+                loss += lambda_rgb * loss_rgb
+                progress_dict["rgb"] = f"{loss_rgb.item():.6f}"
 
             rendered_depth_map = rendered_depth_map.permute(1, 2, 0)
 
             # valid_uv = uv within the a HxW range
-            valid_uv_index = (uv[:,0] > 0) & (uv[:,0] < self.W-1) & (uv[:,1] > 0) & (uv[:,1] < self.H-1)
+            valid_uv_index = ((uv[:,0] > 0) & (uv[:,0] < self.W-1) & (uv[:,1] > 0) & (uv[:,1] < self.H-1)) # (N,)
+            if hasattr(self, 'still_mask'):
+                if camera_only: # only optimize the still part
+                    valid_uv_index[:self.still_mask.shape[0]] = self.still_mask & valid_uv_index[:self.still_mask.shape[0]]
+                else: # only optimize the move part
+                    valid_uv_index[:self.still_mask.shape[0]] = ~self.still_mask & valid_uv_index[:self.still_mask.shape[0]]
             valid_uv = uv[valid_uv_index]
             depth_point_gt = self.gt_depth[valid_uv[:,1].long(), valid_uv[:,0].long()] # shape (N, 1)
             depth_point = depth[valid_uv_index] # shape (N, 1)
@@ -364,11 +406,11 @@ class SimpleGaussian:
             if lambda_depth > 0:
                 # print("rendered_depth_map", rendered_depth_map.min(), rendered_depth_map.max())
                 # print("gt_depth", self.gt_depth.min(), self.gt_depth.max())
-                # loss_depth = l1_loss(depth_point, depth_point_gt) / (depth_point_gt + depth_point)
-                # loss_depth = loss_depth.mean()
-
-                loss_depth = mse_loss_pixel(rendered_depth_map, self.gt_depth) / (self.gt_depth + rendered_depth_map)
+                loss_depth = l1_loss(depth_point, depth_point_gt) / (depth_point_gt + depth_point)
                 loss_depth = loss_depth.mean()
+
+                # loss_depth = mse_loss_pixel(rendered_depth_map, self.gt_depth) / (self.gt_depth + rendered_depth_map)
+                # loss_depth = loss_depth.mean()
 
                 # loss_depth = mse_loss(rendered_depth_map, self.gt_depth)
                 # loss_depth = mse_loss(rendered_depth_map+self.t3, self.gt_depth)
@@ -381,30 +423,38 @@ class SimpleGaussian:
                 loss += lambda_var * loss_var
                 progress_dict["var"] = f"{loss_var.item():.6f}"
 
-            if lambda_still and hasattr(self, 'still_mask'): # pushing all gaussians to be still
-                still_shape = self.still_mask.shape[0]
-                loss_still = torch.norm(self.get_attribute("xyz")[:still_shape][self.still_mask] - self.last_xyz[:still_shape][self.still_mask], dim=1).mean()
+            if lambda_still and hasattr(self, 'still_mask'): # pushing still gaussians to be still
+                still_shape = self.last_still_mask.shape[0]
+                loss_still = torch.norm(self.get_attribute("xyz")[:still_shape][self.last_still_mask] - self.last_xyz[:still_shape][self.last_still_mask], dim=1).mean()
+                # loss_still = torch.norm(self.get_attribute("xyz")[:still_shape][self.still_mask] - self.last_xyz[:still_shape][self.still_mask], dim=1) / (depth_point_gt + depth_point)
+                # loss_still = loss_still.mean()
                 # print(loss_still.shape)
                 # loss_still = loss_still / (depth_point_gt + depth_point)
                 # loss_still = loss_still.mean()
                 loss += lambda_still * loss_still
                 progress_dict["still"] = f"{loss_still.item():.6f}"
 
-            if lambda_flow: # ensure local flow consistency
-                # select uv that uv within the a HxW range
-                and_mask = (uv[:self.last_num,0] > 0) & (uv[:self.last_num,0] < self.W-1) & (uv[:self.last_num,1] > 0) & (uv[:self.last_num,1] < self.H-1)
+            if lambda_flow and hasattr(self, "last_gt_flow"): # ensure local flow consistency
+                # select uv that uv within the a HxW range both in last frame
+                # and_mask = (uv[:self.last_num,0] > 0) & (uv[:self.last_num,0] < self.W-1) & (uv[:self.last_num,1] > 0) & (uv[:self.last_num,1] < self.H-1) # (N_last,)
+                and_mask = (self.last_uv[:,0] > 0) & (self.last_uv[:,0] < self.W-1) & (self.last_uv[:,1] > 0) & (self.last_uv[:,1] < self.H-1) # (N_last,
                 if hasattr(self, 'still_mask'):
-                    and_mask[:self.still_mask.shape[0]] = ~self.still_mask & and_mask[:self.still_mask.shape[0]]
+                    if camera_only: # only optimize the still part
+                        and_mask[:self.still_mask.shape[0]] = self.still_mask & and_mask[:self.still_mask.shape[0]]
+                    else: # only optimize the move part
+                        and_mask[:self.still_mask.shape[0]] = ~self.still_mask & and_mask[:self.still_mask.shape[0]]
+                and_mask = and_mask.detach()
 
                 pred_flow = uv[:self.last_num][and_mask] - self.last_uv[and_mask]
                 # y_coords = torch.clamp(uv.detach()[:,1].long(), 0, self.H-1)
                 # x_coords = torch.clamp(uv.detach()[:,0].long(), 0, self.W-1)
-                y_coords = uv.detach()[:self.last_num][and_mask][:,1].long()
-                x_coords = uv.detach()[:self.last_num][and_mask][:,0].long()
-                # print(y_coords.max(), y_coords.min())
-                # print(x_coords.max(), x_coords.min())
+                y_coords_last = self.last_uv[and_mask][:,1].long()
+                x_coords_last = self.last_uv[and_mask][:,0].long()
+                # print(y_coords_last.max(), y_coords_last.min())
+                # print(x_coords_last.max(), x_coords_last.min())
+                # print(self.last_gt_flow.shape)
 
-                gt_flow = self.gt_flow[y_coords, x_coords]
+                gt_flow = self.last_gt_flow[y_coords_last, x_coords_last]
 
                 # print(pred_flow.shape, gt_flow.shape)
 
@@ -414,91 +464,42 @@ class SimpleGaussian:
 
             self.optimizer.zero_grad()
             loss.backward()
-            # if hasattr(self, 'last_xyz'): # not the first frame
-            #     # for every gaussian, if the gradient of xyz is small, then consider them as still points
-            #     grad_xyz = torch.norm(self.get_attribute("xyz").grad, dim=1)
-            #     print("\t[grad] grad_xyz's max, min:", grad_xyz.max().item(), grad_xyz.min().item())
-            #     grad_mask = grad_xyz < 1e-7
-            #     for name, param in self._attributes.items():
-            #         if name == "xyz":
-            #             param.grad[grad_mask] = 0.
-            #         if name == "rgb":
-            #             param.grad[grad_mask] = 0.
 
-            # Make the new densified gaussians's gradients to be zero: rgb 
+            """gradient control"""
+            # control all gaussians's gradients to be zero: rgb 
             if hasattr(self, 'last_xyz'): # second frame and after
                 for name, param in self._attributes.items():
-                    if name == "rgb":
+                    if name == "rgb" and param.grad is not None:
                         # param.grad[self.last_num:] = 0.
                         param.grad = 0. * param.grad
                     # if name == "opacity":
                     #     param.grad = 0. * param.grad
-
-
-            # if hasattr(self, 'last_xyz'): # second frame and after
-            #     # Make the first num_g_init gaussians's rgb gradients to be zero
+            
+            # control still gaussians's gradients to be zero: all
+            # if hasattr(self, 'still_mask'): # second frame and after
             #     for name, param in self._attributes.items():
-            #         if name == "rgb":
-            #             param.grad[:self.last_num] = 0.
+            #         if param.grad is not None:
+            #             param.grad[:self.last_still_mask.shape[0]][self.last_still_mask] = 0. * param.grad[:self.last_still_mask.shape[0]][self.last_still_mask]
+                    # if name == "xyz":
+                    #     param.grad[:self.still_mask.shape[0]][self.still_mask] = 0. * param.grad[:self.still_mask.shape[0]][self.still_mask]
 
-            # Make the gaussians in still_mask to be still
-            if hasattr(self, 'still_mask'): # third frame and after
-                for name, param in self._attributes.items():
-                    if name == "xyz":
-                        param.grad[:self.still_mask.shape[0]][self.still_mask] = 0.
-
-            #     # If xyz of gaussians is nearly no change, we consider them as the still gaussians
-            #     # and make their gradients to be zero
-            #     for name, param in self._attributes.items():
-            #         if name == "xyz":
-            #             param.grad[still_mask] = 0.
-            #         if name == "rgb":
-            #             param.grad[still_mask] = 0.
-
+            """update the parameters"""
             self.optimizer.step()
-
             progress_dict["total"] = loss.item()
             progress_bar.set_postfix(progress_dict)
-            # progress_bar.set_description(progress_dict)
-            
-            # progress_bar.set_postfix({"Loss": f"{loss:.{7}f}"})
             progress_bar.update(1)
 
-            # if densify_interval:
-            #     grad_dict = {
-            #         "xyz": self._attributes["xyz"],
-            #         # "scales": self.scales,
-            #         # "quats": self.quats,
-            #     }
-            #     self.add_densification_stats(grad_dict)
+            """densification"""
+            # desify the occluded part
+            if not camera_only and iteration == 0 and hasattr(self, 'last_xyz'): # second frame and after
+                self.densify_by_pixels(torch.ones_like(loss_rgb_pixel), error_threshold=0., percent=0.05, mask=mask)
 
-
+            # densify the detail-lacking part
             if not camera_only and densify_interval and (iteration+1) % densify_interval == 0 and (iteration+1) // densify_interval <= densify_times:
-                # grad_dict = {
-                #     "xyz": self._attributes["xyz"],
-                #     # "scales": self.scales,
-                #     # "quats": self.quats,
-                # }
-                # self.add_densification_stats(grad_dict)
-                
-                # grad_norm = self.acquire_densification_stats()
-                # print("\n\t[densify] grad_norm's max, min:", grad_norm.max().item(), grad_norm.min().item())
-                # print("\t[densify] grad_norm's mean, threshold:", grad_norm.mean().item(), grad_threshold)
-                # scene_extent = (self.H+self.W)/2
-                # self.densify_and_clone(grad_norm, grad_threshold, scene_extent, 0.00005, N=2, mask=mask)
-                # self.densify_and_split(grad_norm, grad_threshold*1, scene_extent, 0.0001, N=2, mask=mask, there=True)
-                # # self.densify_and_split(grad_norm, grad_threshold*1, scene_extent, 0.0001, N=2, mask=None, there=True)
-                # torch.cuda.empty_cache()
-                # self.reset_densification_stats()
-                # if hasattr(self, 'still_mask'): # update the still_mask
-                #     still_mask_pad = torch.zeros(self.get_attribute("xyz").shape[0]-num_g_init, dtype=torch.bool).to(self.device)
-                #     self.still_mask = torch.cat((self.still_mask, still_mask_pad), dim=0)
                 if not hasattr(self, 'last_xyz'): # the first frame
-                    self.densify_by_pixels(loss_rgb_pixel, error_threshold=1e-2, percent=0.1, mask=mask)
+                    self.densify_by_pixels(loss_rgb_pixel, error_threshold=1e-2, percent=0.1, mask=None)
                 else:
-                    self.densify_by_pixels(torch.ones_like(loss_rgb_pixel), error_threshold=0., percent=0.03, mask=mask)
-                    self.densify_by_pixels(loss_rgb_pixel, error_threshold=1e-1, percent=0.1, mask=None)
-
+                    self.densify_by_pixels(loss_rgb_pixel, error_threshold=1e-2, percent=0.2, mask=None)
 
             if iteration % 10 == 0:
                 # rgb
@@ -510,67 +511,72 @@ class SimpleGaussian:
                 # center
                 rendered_center_np = render.render2img(rendered_center)
                 frames_center.append(rendered_center_np)
+        
+        progress_bar.close()
+        
+        """post-update prosessing"""
         if not camera_only:
-            if hasattr(self, 'last_xyz'): # not the first frame
-                # if If xyz of gaussians present nearly no change compared to last xyz, 
-                # we consider them as the still gaussians
-                xyz_diff = self.get_attribute("xyz")[:self.last_num] - self.last_xyz # shape (N, 3)
-                # print("xyz_diff.shape", xyz_diff.shape)
-                xyz_diff_norm = torch.norm(xyz_diff, dim=1)
-                # print("xyz_diff_norm.shape", xyz_diff_norm.shape)
-                self.still_mask = xyz_diff_norm < 0.09
-                print("\n\t[still] xyz_diff_norm", xyz_diff_norm[xyz_diff_norm>0].min().item(), xyz_diff_norm.max().item())
+            #### update still_mask
+            within_mask = (uv[...,0] > 0) & (uv[...,0] < self.W-1) & (uv[...,1] > 0) & (uv[...,1] < self.H-1) # (N,)
+            y_coords = uv[within_mask][:,1].long()
+            x_coords = uv[within_mask][:,0].long()
+            gt_flow_point = self.gt_flow[y_coords, x_coords] # (N_within, 2)
+            
+            # clustering based on flow
+            rigid_feat = gt_flow_point.detach().squeeze().cpu().numpy()
+            labels = self.clustering.fit_predict(rigid_feat)
+            labels = torch.from_numpy(labels).to(self.device) # (N_within,)
 
-                # print(xyz_diff.shape)
-                # print(depth_point.shape)
-                # print(self.last_num)
-                # xyz_diff_norm_scaled = xyz_diff_norm / depth_point[:self.last_num].squeeze()
-                # print("\t[still] xyz_diff_norm", xyz_diff_norm[xyz_diff_norm>0].min().item(), xyz_diff_norm.max().item())
-                # self.still_mask = xyz_diff_norm < 0.01
+            # calculate each cluster area
+            cluster0 = ConvexHull2D(uv[within_mask][labels == 0])
+            cluster1 = ConvexHull2D(uv[within_mask][labels == 1])
+            # cluster0 = ConcaveHull2D(uv[within_mask][labels == 0])
+            # cluster1 = ConcaveHull2D(uv[within_mask][labels == 1])
+            cluster0_aera = cluster0.area()
+            cluster1_aera = cluster1.area()
+            moving_cluster = None
 
+            self.still_mask = torch.ones(self.current_pts_num(), dtype=torch.bool).to(self.device).requires_grad_(False) # (N,)
+            if not hasattr(self, 'last_still_mask'): # first frame
+                # convex hull area is larger, means still part
+                larger_cluster_label = 0 if cluster0_aera > cluster1_aera else 1 
+                self.still_mask[within_mask] = (labels == larger_cluster_label)
+                # convex hull area is smaller, means moving part
+                moving_cluster = cluster0 if cluster0_aera < cluster1_aera else cluster1
+            else: # subsequent frames
+                cluster0_mask = torch.ones(self.current_pts_num(), dtype=torch.bool).to(self.device).requires_grad_(False) # (N,)
+                cluster0_mask[within_mask] = (labels == 0)
+                cluster1_mask = torch.ones(self.current_pts_num(), dtype=torch.bool).to(self.device).requires_grad_(False) # (N,)
+                cluster1_mask[within_mask] = (labels == 1)
+                
+                # more common points with last_still_mask, means still part
+                common_num_with_0 = (self.last_still_mask & cluster0_mask[:self.last_still_mask.shape[0]]).sum().item()
+                common_num_with_1 = (self.last_still_mask & cluster1_mask[:self.last_still_mask.shape[0]]).sum().item()
+                more_common_label = 0 if common_num_with_0 > common_num_with_1 else 1
+                self.still_mask[within_mask] = (labels == more_common_label)
+                # less common points with last_still_mask, means moving part
+                moving_cluster = cluster0 if common_num_with_0 < common_num_with_1 else cluster1
+            
+                # inheret the still mask, using logical or operation
+                self.still_mask[:self.last_still_mask.shape[0]] = self.still_mask[:self.last_still_mask.shape[0]] | self.last_still_mask
+            
+            # print mask ratio
+            print("\t[still] mask ratio is", self.still_mask.sum().item() / self.still_mask.size(0))
 
-                within_mask = (uv[:self.last_num,0] > 0) & (uv[:self.last_num,0] < self.W-1) & (uv[:self.last_num,1] > 0) & (uv[:self.last_num,1] < self.H-1)
-                y_coords = uv.detach()[:self.last_num][within_mask][:,1].long()
-                x_coords = uv.detach()[:self.last_num][within_mask][:,0].long()
-                gt_flow_point = self.gt_flow[y_coords, x_coords]
-                # print(uv.shape)
-                # print(self.last_num)
-                # print(within_mask.shape)
-                # print(y_coords.shape)
-                # print(x_coords.shape)
-                # print(gt_flow_point.shape)
-
-                # rigid_feat = torch.concat((xyz_diff,self.get_attribute("xyz")[:self.last_num]),dim=1).detach().squeeze().cpu().numpy()
-                # rigid_feat = xyz_diff.detach().squeeze().cpu().numpy()
-                rigid_feat = gt_flow_point.detach().squeeze().cpu().numpy()
-                labels = self.clustering.fit_predict(rigid_feat)
-                labels = torch.from_numpy(labels).to(self.device)
-                # print(labels.shape)
-                # turn to bool tensor
-                cluster0 = xyz_diff_norm[within_mask][labels == 0].mean()
-                cluster1 = xyz_diff_norm[within_mask][labels == 1].mean()
-                larger_cluster_label = 0 if cluster0 > cluster1 else 1 # movement is larger, means move part
-                self.still_mask = (labels != larger_cluster_label)
-                # print("self.still_mask.shape", self.still_mask.shape)
-                self.still_mask = torch.ones(self.last_num, dtype=torch.bool).to(self.device)
-                self.still_mask[within_mask] = (labels != larger_cluster_label)
-                # inheret the still mask
-                if hasattr(self, 'last_still_mask'):
-                    self.still_mask[:self.last_still_mask.shape[0]] = self.still_mask[:self.last_still_mask.shape[0]] | self.last_still_mask
-                # print("self.still_mask.shape", self.still_mask.shape)
-                # print(labels.min(), labels.max())
-                # print("label mask ratio is ", (labels.sum() / labels.shape[0]).item())
-
-                # print mask ratio
-                print("\t[still] mask ratio is", self.still_mask.sum().item() / self.last_num)
-                self.last_still_mask = self.still_mask
+            ### get the convex hull segmentation
+            self.move_seg = moving_cluster.mask(self.H, self.W)
+            # turn the true/false to 0/255
+            self.move_seg = (self.move_seg * 255).astype(np.uint8)
+                
+            ### save current variables as last_variables for future use
+            self.last_still_mask = self.still_mask.detach()
+            self.last_gt_flow = self.gt_flow
             self.last_uv = uv.detach()
             self.last_depth = depth.detach()
             self.last_xyz = self.get_attribute("xyz").detach()
             self.last_num = self.last_xyz.shape[0]
         
-        progress_bar.close()
-
+        ### render still points and moving points
         still_rgb_np = None
         still_center_np = None
         move_rgb_np = None
@@ -630,6 +636,9 @@ class SimpleGaussian:
                 imageio.imwrite(os.path.join(self.dir, "images", f"img_still_center_{ckpt_name}.png"), still_center_np)
                 imageio.imwrite(os.path.join(self.dir, "images", f"img_move_{ckpt_name}.png"), move_rgb_np)
                 imageio.imwrite(os.path.join(self.dir, "images", f"img_move_center_{ckpt_name}.png"), move_center_np)
+            if hasattr(self, 'move_seg'):
+                os.makedirs(os.path.join(self.dir, "images_seg"), exist_ok=True)
+                imageio.imwrite(os.path.join(self.dir, "images_seg", f"move_mask_{ckpt_name}.png"), self.move_seg)
 
         if save_videos:
             # save them as a video with imageio
@@ -641,7 +650,7 @@ class SimpleGaussian:
             imageio.mimwrite(os.path.join(self.dir, "training_depth.mp4"), frames_depth_np, fps=30)
 
         if save_ckpt:
-            self.save_checkpoint(ckpt_name=ckpt_name)
+            self.save_checkpoint(ckpt_name=ckpt_name, camera_only=camera_only)
 
         return frames, frames_center, frames_depth, still_rgb_np, still_center_np, move_rgb_np, move_center_np
     
@@ -812,11 +821,13 @@ class SimpleGaussian:
         print("\n\t[densify] error_map's max, min, mean:", error_map.max().item(), error_map.min().item(), error_map.mean().item())
         # add uniform magnitude, to avoid zero probability
         error_map = error_map + np.nanmin(error_map[error_map>0])
+        # densify_mask_ratio = 1
         if mask is not None:
             mask = mask.detach().cpu().numpy().squeeze()
             # transfer to bool type
             mask = mask > 0
             error_map = error_map*mask
+        error_map_ratio = np.sum(error_map>0) / np.size(error_map)
 
         # make positive elements to be 1, and negative elements to be 0
         # error_map = np.where(error_map > error_threshold, 1, 0)
@@ -834,8 +845,13 @@ class SimpleGaussian:
             xys = np.array(sampled_coordinates).T[:,::-1].copy()
             depths = self.gt_depth[sampled_coordinates]
             scales = 1 / probability_distribution[sampled_coordinates]
-            scales = 0.1 * scales / np.max(scales)
-            # scales = scales / 1e3
+            scales = np.ones_like(scales) * (1/self.num_points)
+
+            # scales = scales * 100. / np.sum(scales)
+            # scales = scales * densify_num / self.num_points
+            # scales = error_map_ratio * scales
+            # scales = scales / np.max(scales)
+            # scales = scales / self.num_points
             scales = scales * (depths.cpu().numpy()/depths.cpu().numpy().min()).squeeze()
             rgbs = self.gt_image[sampled_coordinates]
             # print("\t[densify] sampled rgbs' max, min:", rgbs.max().item(), rgbs.min().item())
@@ -845,6 +861,9 @@ class SimpleGaussian:
             depths = depths.to(self.device).float()
             new_xyz = geometry.pix2world(xys, depths, self.intr, self.extr)
             scales = torch.from_numpy(scales).float().unsqueeze(1).repeat(1, 3).to(self.device)
+
+            # scales = torch.clamp_max(scales, 1e-7) 
+
             new_scale = self._activations_inv["scale"](scales)
             rgbs = rgbs.contiguous()
             eps = 1e-15  # avoid logit function input 0 or 1
@@ -1047,7 +1066,7 @@ if __name__ == "__main__":
     
     C, H, W = gt_image.shape 
     
-    gaussians = SimpleGaussian(gt_image=gt_image.permute(1, 2, 0), gt_depth=gt_depth.permute(1,2,0), num_points=10000, depth_scale=10.) # H, W, C
+    gaussians = SimpleGaussian(gt_image=gt_image.permute(1, 2, 0), gt_depth=gt_depth.permute(1,2,0), num_points=10000) # H, W, C
     gaussians.init_gaussians_from_image(gt_image=gt_image.permute(1, 2, 0), gt_depth=gt_depth.permute(1,2,0), num_points=10000, t3=gaussians.t3)
     gaussians.train(iterations=500, lr=1e-2, lambda_depth=0.01, 
                     save_imgs=True, save_videos=True, save_ckpt=True, 
