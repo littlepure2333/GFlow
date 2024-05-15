@@ -14,3 +14,6 @@ torchsnooper
 matplotlib
 gpustat
 plyfile
+alphashape
+scikit-image
+piqa
