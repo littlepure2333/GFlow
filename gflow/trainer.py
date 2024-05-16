@@ -571,7 +571,7 @@ class SimpleGaussian:
             print("\t[still] mask ratio is", self.still_mask.sum().item() / self.still_mask.size(0))
 
             ### get the convex hull segmentation
-            self.move_seg = moving_cluster.mask(self.H, self.W)
+            self.move_seg = moving_cluster.mask(self.W, self.H)
             # turn the true/false to 0/255
             self.move_seg = (self.move_seg * 255).astype(np.uint8)
                 
