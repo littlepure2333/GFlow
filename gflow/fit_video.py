@@ -1,7 +1,8 @@
 from typing import Optional
 from pathlib import Path
-from utils import image_path_to_tensor, read_depth, read_camera
+from utils import image_path_to_tensor, read_depth, read_camera, process_frames_to_video, process_traj_to_tracks
 from trainer import SimpleGaussian
+from traj_visualizer import TrajVisualizer
 import os
 import tyro
 import torch
@@ -9,6 +10,7 @@ import imageio
 import numpy as np
 from typing import Literal
 from helper import readFlow
+import msplat
 
 # TODO background augmentation
 
@@ -98,6 +100,8 @@ def main(
     frames_move_center_sequence = []
     frames_sequence_traj = []
     frames_sequence_traj_upon = []
+    sequence_traj = []
+
 
     # read all images(png, jpg, ...) in the folder and sort them
     img_paths = sorted(Path(sequence_path).glob("*.png")) + sorted(Path(sequence_path).glob("*.jpg"))
@@ -176,6 +180,9 @@ def main(
         )
         frames_sequence_traj.append(out_img_traj)
         frames_sequence_traj_upon.append(out_img_traj_upon)
+        traj_points = trainer.get_attribute('xyz')[traj_index]
+        (traj_uv, depth) = trainer.project_points(traj_points)
+        sequence_traj.append(traj_uv.detach().cpu().numpy())
 
     # fit the subsequent frames
     # for img_path in img_paths[1:]:
@@ -294,6 +301,9 @@ def main(
             )
             frames_sequence_traj.append(out_img_traj)
             frames_sequence_traj_upon.append(out_img_traj_upon)
+            traj_points = trainer.get_attribute('xyz')[traj_index]
+            (traj_uv, depth) = trainer.project_points(traj_points)
+            sequence_traj.append(traj_uv.detach().cpu().numpy())
     
     # generate video
     for name, frames, fps in zip(
@@ -311,6 +321,17 @@ def main(
         [5, 5]):
         mp4_path = os.path.join(trainer.dir, f"{name}.mp4")
         save_video(mp4_path, frames, fps)
+    
+    # import pickle
+    # pickle.dump(sequence_traj, open(os.path.join(trainer.dir, "sequence_traj.pkl"), "wb"))
+    # pickle.dump(frames_sequence, open(os.path.join(trainer.dir, "frames_sequence.pkl"), "wb"))
+    # save trajectory
+    frames_video_torch = process_frames_to_video(frames_sequence)
+    tracks_traj = process_traj_to_tracks(sequence_traj)
+
+    traj_visualizer = TrajVisualizer(save_dir=trainer.dir, pad_value=0, linewidth=3, fps=5)
+    traj_visualizer.visualize(video=frames_video_torch,tracks=tracks_traj, filename="sequence_traj_vis")
+
     
 def save_video(mp4_path, frames, fps):
     # Convert frames to uint8 before saving with imageio

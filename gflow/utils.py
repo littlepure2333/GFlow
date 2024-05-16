@@ -391,3 +391,14 @@ def and_with_most_common(set0, set1, set2):
     and_set = set0 & common_set
 
     return torch.tensor(list(and_set), device=set0.device)
+
+def process_frames_to_video(frames_sequence):
+    frames_video_torch = torch.from_numpy(np.stack(frames_sequence))
+    frames_video_torch = frames_video_torch.permute(0,3,1,2)
+    frames_video_torch = frames_video_torch[None, :].float()
+    return frames_video_torch
+
+def process_traj_to_tracks(sequence_traj):
+    tracks_traj = torch.from_numpy(np.stack(sequence_traj))
+    tracks_traj = tracks_traj[None, :].float()
+    return tracks_traj

@@ -1051,6 +1051,9 @@ class SimpleGaussian:
         for name, tensor in self.grad_accum.items():
             grad_sum += self.grad_accum[name] / self.denom[name]
         return grad_sum
+
+    def project_points(self, points):
+        return msplat.project_point(points, self.intr, self.extr, self.W, self.H)
         
 
 if __name__ == "__main__":
