@@ -6,7 +6,7 @@ import numpy as np
 import imageio
 import msplat
 import utils
-from utils import read_depth, ConvexHull2D, ConcaveHull2D
+from utils import read_depth, ConvexHull2D, ConcaveHull2D, FastConcaveHull2D
 from init import complex_texture_sampling, image_sampling
 from datetime import datetime
 import os
@@ -528,10 +528,17 @@ class SimpleGaussian:
             labels = torch.from_numpy(labels).to(self.device) # (N_within,)
 
             # calculate each cluster area
-            cluster0 = ConvexHull2D(uv[within_mask][labels == 0])
-            cluster1 = ConvexHull2D(uv[within_mask][labels == 1])
+            # save the uv to the uv.npy in the root path for testing
+            # np.save("uv_data/uv.npy", uv[within_mask].detach().cpu().numpy())
+            # np.save("uv_data/uv_0.npy", uv[within_mask][labels == 0].detach().cpu().numpy())
+            # np.save("uv_data/uv_1.npy", uv[within_mask][labels == 1].detach().cpu().numpy())
+            # import pdb; pdb.set_trace()
+            # cluster0 = ConvexHull2D(uv[within_mask][labels == 0])
+            # cluster1 = ConvexHull2D(uv[within_mask][labels == 1])
             # cluster0 = ConcaveHull2D(uv[within_mask][labels == 0])
             # cluster1 = ConcaveHull2D(uv[within_mask][labels == 1])
+            cluster0 = FastConcaveHull2D(uv[within_mask][labels == 0])
+            cluster1 = FastConcaveHull2D(uv[within_mask][labels == 1])
             cluster0_aera = cluster0.area()
             cluster1_aera = cluster1.area()
             moving_cluster = None

@@ -15,6 +15,7 @@ from descartes import PolygonPatch
 from matplotlib import pyplot as plt
 import concavity
 from concavity.utils import *
+from concave_hull import concave_hull
 
 def image_path_to_tensor(image_path, resize: int = None, blur: bool = False, blur_sigma: float = 5.0, blur_kernel_size: int = 7):
     img = Image.open(image_path) # the range is [0,1] by Image.open
@@ -309,6 +310,28 @@ class ConcaveHull2D:
 
         return mask
 
+
+class FastConcaveHull2D:
+    def __init__(self, points, sigma=0., num_points_factor=2):
+        self.points = points
+
+        # judge if the points are in numpy format, if not, convert them to numpy
+        if isinstance(points, torch.Tensor):
+            self.points = points.detach().cpu().numpy()
+        
+        # calculate the convex hull
+        points = concave_hull(self.points)
+        self.hull = Polygon(points)
+        if sigma > 0:
+            self.hull = concavity.gaussian_smooth_geom(self.hull, sigma=sigma, num_points_factor=num_points_factor)
+    
+    def area(self):
+        return self.hull.area
+
+    def mask(self, width, height):
+        mask = polygon_to_mask(self.hull, width, height)
+
+        return mask
 
 class ConvexHull2D:
     def __init__(self, points):
