@@ -165,6 +165,20 @@ var cameras = [
 
 let camera = cameras[0];
 
+function displayCameraInfo(camera) {
+    const cameraInfoDiv = document.getElementById("camera-info");
+    cameraInfoDiv.innerHTML = `
+        <strong>Camera ID:</strong> ${camera.id}<br>
+        <strong>Image Name:</strong> ${camera.img_name}<br>
+        <strong>Width:</strong> ${camera.width}<br>
+        <strong>Height:</strong> ${camera.height}<br>
+        <strong>Position:</strong> ${camera.position.join(", ")}<br>
+        <strong>Rotation:</strong> ${camera.rotation.map(row => row.join(", ")).join("<br>")}<br>
+        <strong>FX:</strong> ${camera.fx}<br>
+        <strong>FY:</strong> ${camera.fy}
+    `;
+}
+
 function getProjectionMatrix(fx, fy, width, height) {
     const znear = 0.2;
     const zfar = 200;
@@ -973,6 +987,7 @@ async function main() {
             carousel = true;
             camid.innerText =""
         }
+        displayCameraInfo(camera);
     });
     window.addEventListener("keyup", (e) => {
         activeKeys = activeKeys.filter((k) => k !== e.code);
@@ -1205,6 +1220,10 @@ async function main() {
     const frame = (now) => {
         let inv = invert4(viewMatrix);
         let shiftKey = activeKeys.includes("Shift") || activeKeys.includes("ShiftLeft") || activeKeys.includes("ShiftRight")
+        
+        if (activeKeys.includes("KeyZ")){
+            
+        }
 
         if (activeKeys.includes("ArrowUp")) {
             if (shiftKey) {
@@ -1470,6 +1489,7 @@ async function main() {
             buffer: splatData.buffer,
             vertexCount: Math.floor(bytesRead / rowLength),
         });
+    displayCameraInfo(camera);
     
 }
 

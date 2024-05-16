@@ -162,6 +162,12 @@
 				z-index: 999;
 				right: 10px;
 			}
+			#caminformation{
+				position: absolute;
+				top: 10px;
+				z-index: 999;
+				right: 10px;
+			}
 			#canvas {
 				display: block;
 				position: absolute;
@@ -191,6 +197,13 @@
 		<script>
 			if(location.host.includes('hf.space')) document.body.classList.add('nohf');
 		</script>
+		<div id="caminfo">
+			<span id="camid"></span>
+			<p>
+				<small class="nohf" id="camera-info">
+				</small>
+			</p>
+		</div>
 		<div id="info">
 			<h3 class="nohf">WebGL 3D Gaussian Splat Viewer</h3>
 			<p>
@@ -201,7 +214,6 @@
 				>.
 			</small>
 		</p>
-
 			<details>
 			<summary>Use mouse or arrow keys to navigate.</summary>
 
