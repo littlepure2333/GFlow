@@ -569,7 +569,9 @@ class SimpleGaussian:
             
             # print mask ratio
             print("\t[still] mask ratio is", self.still_mask.sum().item() / self.still_mask.size(0))
-
+            
+            if not hasattr(self, 'move_seg'):
+                self.first_move_seg = moving_cluster.mask(self.W, self.H)
             ### get the convex hull segmentation
             self.move_seg = moving_cluster.mask(self.W, self.H)
             # turn the true/false to 0/255
@@ -1066,7 +1068,7 @@ if __name__ == "__main__":
     img = img.astype(np.float32) / 255.0
     gt_image = torch.from_numpy(img).cuda().permute(2, 0, 1) # C, H, W
     
-    depth = imageio.imread("./data/face_depth.png") # H, W, C
+    depth = imageio.imread("./data/face_depth.png") # H, W, Cf
     depth = np.expand_dims(depth, axis=-1)
     # depth = imageio.imread("./images/car-turn/car-turn/00000.jpg") # H, W, C
     depth = depth.astype(np.float32) / 255.0

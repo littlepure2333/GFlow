@@ -402,3 +402,8 @@ def process_traj_to_tracks(sequence_traj):
     tracks_traj = torch.from_numpy(np.stack(sequence_traj))
     tracks_traj = tracks_traj[None, :].float()
     return tracks_traj
+
+def process_segm_mask(move_seg):
+    sege_mask = torch.from_numpy(move_seg).float()
+    sege_mask = sege_mask[None, None, :].float()
+    return sege_mask

@@ -60,7 +60,7 @@ class TrajVisualizer:
         fps: int = 10,
         mode: str = "rainbow",  # 'cool', 'optical_flow'
         linewidth: int = 2,
-        show_first_frame: int = 10,
+        show_first_frame: int = 0,
         tracks_leave_trace: int = -1,  # -1 for infinite
     ):
         self.mode = mode
@@ -94,7 +94,7 @@ class TrajVisualizer:
             assert segm_mask is not None
         if segm_mask is not None:
             coords = tracks[0, query_frame].round().long()
-            segm_mask = segm_mask[0, query_frame][coords[:, 1], coords[:, 0]].long()
+            segm_mask = segm_mask[0, query_frame][coords[:, 1].clamp(0, segm_mask.shape[2]-1), coords[:, 0].clamp(0, segm_mask.shape[3]-1)].long()
 
         video = F.pad(
             video,
@@ -198,18 +198,28 @@ class TrajVisualizer:
                     vector_colors[t] = np.repeat(color, N, axis=0)
         else:
             if self.mode == "rainbow":
-                vector_colors[:, segm_mask <= 0, :] = 255
+                # vector_colors[:, segm_mask <= 0, :] = 255
 
+                # y_min, y_max = (
+                #     tracks[0, segm_mask > 0, 1].min(),
+                #     tracks[0, segm_mask > 0, 1].max(),
+                # )
+                # norm = plt.Normalize(y_min, y_max)
+                # for n in range(N):
+                #     if segm_mask[n] > 0:
+                #         color = self.color_map(norm(tracks[0, n, 1]))
+                #         color = np.array(color[:3])[None] * 255
+                #         vector_colors[:, n] = np.repeat(color, T, axis=0)
+            # if self.mode == "rainbow":
                 y_min, y_max = (
-                    tracks[0, segm_mask > 0, 1].min(),
-                    tracks[0, segm_mask > 0, 1].max(),
+                    tracks[query_frame, :, 1].min(),
+                    tracks[query_frame, :, 1].max(),
                 )
                 norm = plt.Normalize(y_min, y_max)
                 for n in range(N):
-                    if segm_mask[n] > 0:
-                        color = self.color_map(norm(tracks[0, n, 1]))
-                        color = np.array(color[:3])[None] * 255
-                        vector_colors[:, n] = np.repeat(color, T, axis=0)
+                    color = self.color_map(norm(tracks[query_frame, n, 1]))
+                    color = np.array(color[:3])[None] * 255
+                    vector_colors[:, n] = np.repeat(color, T, axis=0)
 
             else:
                 # color changes with segm class
@@ -234,8 +244,9 @@ class TrajVisualizer:
                     ).mean(1)[:, None]
 
                     curr_tracks = curr_tracks - diff
-                    curr_tracks = curr_tracks[:, segm_mask > 0]
-                    curr_colors = curr_colors[:, segm_mask > 0]
+                    # Only show moving tracks if uncommented
+                    # curr_tracks = curr_tracks[:, segm_mask > 0]
+                    # curr_colors = curr_colors[:, segm_mask > 0]
 
                 res_video[t] = self._draw_pred_tracks(
                     res_video[t],
@@ -261,6 +272,14 @@ class TrajVisualizer:
                             img,
                             coord=coord,
                             radius=int(self.linewidth * 2),
+                            color=vector_colors[t, i].astype(int),
+                            visible=visibile,
+                        )
+                    else:
+                        img = draw_circle(
+                            img,
+                            coord=coord,
+                            radius=int(self.linewidth),
                             color=vector_colors[t, i].astype(int),
                             visible=visibile,
                         )

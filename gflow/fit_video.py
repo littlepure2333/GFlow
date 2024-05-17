@@ -1,6 +1,6 @@
 from typing import Optional
 from pathlib import Path
-from utils import image_path_to_tensor, read_depth, read_camera, process_frames_to_video, process_traj_to_tracks
+from utils import image_path_to_tensor, read_depth, read_camera, process_frames_to_video, process_traj_to_tracks, process_segm_mask
 from trainer import SimpleGaussian
 from traj_visualizer import TrajVisualizer
 import os
@@ -328,9 +328,11 @@ def main(
     # save trajectory
     frames_video_torch = process_frames_to_video(frames_sequence)
     tracks_traj = process_traj_to_tracks(sequence_traj)
+    # import pdb; pdb.set_trace()
+    segm_mask = process_segm_mask(trainer.first_move_seg)
 
     traj_visualizer = TrajVisualizer(save_dir=trainer.dir, pad_value=0, linewidth=3, fps=5)
-    traj_visualizer.visualize(video=frames_video_torch,tracks=tracks_traj, filename="sequence_traj_vis")
+    traj_visualizer.visualize(video=frames_video_torch,tracks=tracks_traj, segm_mask=segm_mask, filename="sequence_traj_vis", compensate_for_camera_motion=True)
 
     
 def save_video(mp4_path, frames, fps):
