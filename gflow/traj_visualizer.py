@@ -69,6 +69,9 @@ def draw_line(rgb, coord_y, coord_x, color, linewidth):
 def add_weighted(rgb, alpha, original, beta, gamma):
     return (rgb * alpha + original * beta + gamma).astype("uint8")
 
+def check_within(corrdinate, width, height):
+    return corrdinate[0] >= 0 and corrdinate[0] < width and corrdinate[1] >= 0 and corrdinate[1] < height
+
 
 class TrajVisualizer:
     def __init__(
@@ -94,7 +97,7 @@ class TrajVisualizer:
         self.pad_value = pad_value
         self.linewidth = linewidth
         self.fps = fps
-
+    
     def visualize(
         self,
         video: torch.Tensor,  # (B,T,C,H,W)
@@ -284,6 +287,7 @@ class TrajVisualizer:
             img = Image.fromarray(np.uint8(res_video[t]))
             for i in range(N):
                 coord = (tracks[t, i, 0], tracks[t, i, 1])
+                if not check_within(coord, W, H): continue
                 visibile = True
                 if visibility is not None:
                     visibile = visibility[0, t, i]
@@ -334,6 +338,7 @@ class TrajVisualizer:
         vector_colors: np.ndarray,
         alpha: float = 0.5,
     ):
+        H, W = rgb.shape[:2]
         T, N, _ = tracks.shape
         rgb = Image.fromarray(np.uint8(rgb))
         for s in range(T - 1):
@@ -343,6 +348,8 @@ class TrajVisualizer:
             for i in range(N):
                 coord_y = (int(tracks[s, i, 0]), int(tracks[s, i, 1]))
                 coord_x = (int(tracks[s + 1, i, 0]), int(tracks[s + 1, i, 1]))
+                if not check_within(coord_y, W, H): continue
+                if not check_within(coord_x, W, H): continue
                 if coord_y[0] != 0 and coord_y[1] != 0:
                     rgb = draw_line(
                         rgb,

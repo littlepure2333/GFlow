@@ -408,7 +408,22 @@ def process_segm_mask(move_seg):
     sege_mask = sege_mask[None, None, :].float()
     return sege_mask
 
-def process_occu(sequence_traj_occlusion):
+def process_color_occu(sequence_traj_occlusion):
     occulasions = torch.from_numpy(np.stack(sequence_traj_occlusion))
     occulasions = occulasions[None, :].float()
     return occulasions
+
+def process_occu(sequence_traj_occlusion, tracks):
+    tracks = tracks.clone()
+    tracks[:, :, :, 0] = tracks[:, :, :, 0].clip(0, sequence_traj_occlusion[0].shape[1]-1)
+    tracks[:, :, :, 1] = tracks[:, :, :, 1].clip(0, sequence_traj_occlusion[0].shape[0]-1)
+    occulasions = torch.full((1, len(sequence_traj_occlusion), tracks.shape[2]), False)
+    moving_part = []
+    for j in range(tracks.shape[2]):
+        moving_part.append(sequence_traj_occlusion[0][round(tracks[0, 0, j, 1].item()), round(tracks[0, 0, j, 0].item())])
+    for i in range(len(sequence_traj_occlusion)):
+        move_seg = sequence_traj_occlusion[i]
+        for j in range(tracks.shape[2]):
+            occulasions[0, i, j] = not moving_part[j] and move_seg[round(tracks[0, i, j, 1].item()), round(tracks[0, i, j, 0].item())]
+    return occulasions
+

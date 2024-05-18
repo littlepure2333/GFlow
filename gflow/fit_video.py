@@ -184,12 +184,13 @@ def main(
         traj_points = trainer.get_attribute('xyz')[traj_index]
         (traj_uv, depth) = trainer.project_points(traj_points)
         sequence_traj.append(traj_uv.detach().cpu().numpy())
-        traj_W_indices = np.round(traj_uv[:, 1].detach().cpu().numpy()).clip(0, frames_sequence[-1].shape[0]-1).astype(int)
-        traj_H_indices = np.round(traj_uv[:, 0].detach().cpu().numpy()).clip(0, frames_sequence[-1].shape[1]-1).astype(int)
-        original_colors = trainer.get_attribute("rgb")[traj_index].detach().cpu().numpy()
-        projected_colors = frames_sequence[-1][traj_W_indices, traj_H_indices]/255.
-        color_difference = np.linalg.norm(projected_colors-original_colors, axis=1)
-        sequence_traj_occlusion.append(color_difference)
+        # traj_W_indices = np.round(traj_uv[:, 1].detach().cpu().numpy()).clip(0, frames_sequence[-1].shpe[0]-1).astype(int)
+        # traj_H_indices = np.round(traj_uv[:, 0].detach().cpu().numpy()).clip(0, frames_sequence[-1].shape[1]-1).astype(int)
+        # original_colors = trainer.get_attribute("rgb")[traj_index].detach().cpu().numpy()
+        # projected_colors = frames_sequence[-1][traj_W_indices, traj_H_indices]/255.
+        # color_difference = np.linalg.norm(projected_colors-original_colors, axis=1)a
+        # sequence_traj_occlusion.append(color_difference)
+        sequence_traj_occlusion.append(trainer.move_seg)
 
     # fit the subsequent frames
     # for img_path in img_paths[1:]:
@@ -311,13 +312,14 @@ def main(
             traj_points = trainer.get_attribute('xyz')[traj_index]
             (traj_uv, depth) = trainer.project_points(traj_points)
             sequence_traj.append(traj_uv.detach().cpu().numpy())
-            traj_W_indices = np.round(traj_uv[:, 1].detach().cpu().numpy()).clip(0, frames_sequence[-1].shape[0]-1).astype(int)
-            traj_H_indices = np.round(traj_uv[:, 0].detach().cpu().numpy()).clip(0, frames_sequence[-1].shape[1]-1).astype(int)
-            # import pdb; pdb.set_trace()
-            original_colors = trainer.get_attribute("rgb")[traj_index].detach().cpu().numpy()*trainer.get_attribute("opacity")[traj_index].detach().cpu().numpy()
-            projected_colors = frames_sequence[-1][traj_W_indices, traj_H_indices]/255.
-            color_difference = np.linalg.norm(projected_colors-original_colors, axis=1)
-            sequence_traj_occlusion.append(color_difference)
+            # traj_W_indices = np.round(traj_uv[:, 1].detach().cpu().numpy()).clip(0, frames_sequence[-1].shape[0]-1).astype(int)
+            # traj_H_indices = np.round(traj_uv[:, 0].detach().cpu().numpy()).clip(0, frames_sequence[-1].shape[1]-1).astype(int)
+            # # import pdb; pdb.set_trace()
+            # original_colors = trainer.get_attribute("rgb")[traj_index].detach().cpu().numpy()*trainer.get_attribute("opacity")[traj_index].detach().cpu().numpy()
+            # projected_colors = frames_sequence[-1][traj_W_indices, traj_H_indices]/255.
+            # color_difference = np.linalg.norm(projected_colors-original_colors, axis=1)
+            # sequence_traj_occlusion.append(color_difference)
+            sequence_traj_occlusion.append(trainer.move_seg)
 
 
     
@@ -338,22 +340,26 @@ def main(
         mp4_path = os.path.join(trainer.dir, f"{name}.mp4")
         save_video(mp4_path, frames, fps)
     
-    # import pickle
-    # pickle.dump(sequence_traj, open(os.path.join(trainer.dir, "sequence_traj.pkl"), "wb"))
-    # pickle.dump(frames_sequence, open(os.path.join(trainer.dir, "frames_sequence.pkl"), "wb"))
+    import pickle
+    pickle.dump(sequence_traj, open(os.path.join(trainer.dir, "sequence_traj.pkl"), "wb"))
+    pickle.dump(frames_sequence, open(os.path.join(trainer.dir, "frames_sequence.pkl"), "wb"))
     # pickle.dump(trainer.first_move_seg, open(os.path.join(trainer.dir, "first_move_seg.pkl"), "wb"))
-    # pickle.dump(sequence_traj_occlusion, open(os.path.join(trainer.dir, "sequence_traj_occlusion.pkl"), "wb"))
+    pickle.dump(sequence_traj_occlusion, open(os.path.join(trainer.dir, "sequence_traj_occlusion.pkl"), "wb"))
     # save trajectory
 
     frames_video_torch = process_frames_to_video(frames_sequence)
     tracks_traj = process_traj_to_tracks(sequence_traj)
     # import pdb; pdb.set_trace()
-    segm_mask = process_segm_mask(trainer.first_move_seg)
-    occulasions = process_occu(sequence_traj_occlusion)
-    occulasions = occulasions>0.4
+    # segm_mask = process_segm_mask(trainer.first_move_seg)
+    # occulasions = process_color_occu(sequence_traj_occlusion)
+    # occulasions = occulasions>0.4
+    # import pdb; pdb.set_trace()
+    occulasions = process_occu(sequence_traj_occlusion, tracks_traj)
+    
 
-    traj_visualizer = TrajVisualizer(save_dir=trainer.dir, pad_value=0, linewidth=3, fps=5)
-    traj_visualizer.visualize(video=frames_video_torch,tracks=tracks_traj, segm_mask=segm_mask, occulasions=occulasions, filename="sequence_traj_vis", compensate_for_camera_motion=True)
+    traj_visualizer = TrajVisualizer(save_dir=trainer.dir, pad_value=0, linewidth=3, fps=5, show_first_frame=2)
+    # traj_visualizer.visualize(video=frames_video_torch,tracks=tracks_traj, segm_mask=segm_mask, occulasions=occulasions, filename="sequence_traj_vis", compensate_for_camera_motion=True)
+    traj_visualizer.visualize(video=frames_video_torch,tracks=tracks_traj, occulasions=occulasions, filename="sequence_traj_vis")
 
     
 def save_video(mp4_path, frames, fps):
