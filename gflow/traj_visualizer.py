@@ -36,6 +36,25 @@ def draw_circle(rgb, coord, radius, color=(255, 0, 0), visible=True):
     )
     return rgb
 
+def draw_cross(rgb, coord, size, color=(255, 0, 0)):
+    draw = ImageDraw.Draw(rgb)
+    
+    # Calculate the coordinates for the horizontal line of the cross
+    left_point = (coord[0] - size, coord[1])
+    right_point = (coord[0] + size, coord[1])
+    
+    # Calculate the coordinates for the vertical line of the cross
+    top_point = (coord[0], coord[1] - size)
+    bottom_point = (coord[0], coord[1] + size)
+    
+    # Draw the cross
+    draw.line([left_point, right_point], fill=tuple(color), width=4)
+    draw.line([top_point, bottom_point], fill=tuple(color), width=4)
+    
+    return rgb
+
+
+
 
 def draw_line(rgb, coord_y, coord_x, color, linewidth):
     draw = ImageDraw.Draw(rgb)
@@ -83,6 +102,7 @@ class TrajVisualizer:
         visibility: torch.Tensor = None,  # (B, T, N, 1) bool
         gt_tracks: torch.Tensor = None,  # (B,T,N,2)
         segm_mask: torch.Tensor = None,  # (B,1,H,W)
+        occulasions: torch.Tensor = None,  # (B,T,N)
         filename: str = "video",
         writer=None,  # tensorboard Summary Writer, used for visualization during training
         step: int = 0,
@@ -114,6 +134,7 @@ class TrajVisualizer:
             tracks=tracks,
             visibility=visibility,
             segm_mask=segm_mask,
+            occulasions=occulasions,
             gt_tracks=gt_tracks,
             query_frame=query_frame,
             compensate_for_camera_motion=compensate_for_camera_motion,
@@ -155,6 +176,7 @@ class TrajVisualizer:
         tracks: torch.Tensor,
         visibility: torch.Tensor = None,
         segm_mask: torch.Tensor = None,
+        occulasions: torch.Tensor = None,
         gt_tracks=None,
         query_frame: int = 0,
         compensate_for_camera_motion=False,
@@ -238,6 +260,7 @@ class TrajVisualizer:
                 curr_tracks = tracks[first_ind : t + 1]
                 curr_colors = vector_colors[first_ind : t + 1]
                 if compensate_for_camera_motion:
+                    # within_mask = tracks[]
                     diff = (
                         tracks[first_ind : t + 1, segm_mask <= 0]
                         - tracks[t : t + 1, segm_mask <= 0]
@@ -268,21 +291,35 @@ class TrajVisualizer:
                     if not compensate_for_camera_motion or (
                         compensate_for_camera_motion and segm_mask[i] > 0
                     ):
-                        img = draw_circle(
-                            img,
-                            coord=coord,
-                            radius=int(self.linewidth * 2),
-                            color=vector_colors[t, i].astype(int),
-                            visible=visibile,
-                        )
+                        if occulasions[0, t, i]:
+                            img = draw_cross(
+                                img,
+                                coord=coord,
+                                size=int(self.linewidth * 2),
+                                color=vector_colors[t, i].astype(int),)
+                        else:
+                            img = draw_circle(
+                                img,
+                                coord=coord,
+                                radius=int(self.linewidth * 2),
+                                color=vector_colors[t, i].astype(int),
+                                visible=visibile,
+                            )
                     else:
-                        img = draw_circle(
-                            img,
-                            coord=coord,
-                            radius=int(self.linewidth),
-                            color=vector_colors[t, i].astype(int),
-                            visible=visibile,
-                        )
+                        if occulasions[0, t, i]:
+                            img = draw_cross(
+                                img,
+                                coord=coord,
+                                size=int(self.linewidth * 2),
+                                color=vector_colors[t, i].astype(int),)
+                        else:
+                            img = draw_circle(
+                                img,
+                                coord=coord,
+                                radius=int(self.linewidth * 2),
+                                color=vector_colors[t, i].astype(int),
+                                visible=visibile,
+                            )
             res_video[t] = np.array(img)
 
         #  construct the final rgb sequence

@@ -407,3 +407,8 @@ def process_segm_mask(move_seg):
     sege_mask = torch.from_numpy(move_seg).float()
     sege_mask = sege_mask[None, None, :].float()
     return sege_mask
+
+def process_occu(sequence_traj_occlusion):
+    occulasions = torch.from_numpy(np.stack(sequence_traj_occlusion))
+    occulasions = occulasions[None, :].float()
+    return occulasions
