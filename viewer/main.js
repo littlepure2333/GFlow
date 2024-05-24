@@ -165,17 +165,69 @@ var cameras = [
 
 let camera = cameras[0];
 
+function transposeMatrix(matrix) {
+    const rows = matrix.length, cols = matrix[0].length;
+    let transposed = [];
+    for (let i = 0; i < cols; i++) {
+        transposed[i] = [];
+        for (let j = 0; j < rows; j++) {
+            transposed[i][j] = matrix[j][i];
+        }
+    }
+    return transposed;
+}
+
+function multiplyMatrixVector(matrix, vector) {
+    let result = [];
+    for (let i = 0; i < matrix.length; i++) {
+        result[i] = 0;
+        for (let j = 0; j < vector.length; j++) {
+            result[i] += matrix[i][j] * vector[j];
+        }
+    }
+    return result;
+}
+
+function negateVector(vector) {
+    return vector.map(value => -value);
+}
+
+function extractCameraExtrFromViewmat(viewmat) {
+    console.log(viewmat);
+    // Viewmat Size: (4,4)
+    // Extract rotation matrix and translation vector from the extrinsic matrix
+    let R = [
+        [viewmat[0], viewmat[1], viewmat[2]],
+        [viewmat[4], viewmat[5], viewmat[6]],
+        [viewmat[8], viewmat[9], viewmat[10]]
+    ];
+    
+    let t = [viewmat[12], viewmat[13], viewmat[14]];
+    R = transposeMatrix(R);
+    t = multiplyMatrixVector(R, t);
+
+    let extr = [
+        [R[0][0], R[0][1], R[0][2], t[0]],
+        [R[1][0], R[1][1], R[1][2], t[1]],
+        [R[2][0], R[2][1], R[2][2], t[2]]
+    ];
+
+    return extr;
+}
+
 function displayCameraInfo(camera) {
     const cameraInfoDiv = document.getElementById("camera-info");
     cameraInfoDiv.innerHTML = `
-        <strong>Camera ID:</strong> ${camera.id}<br>
         <strong>Image Name:</strong> ${camera.img_name}<br>
         <strong>Width:</strong> ${camera.width}<br>
         <strong>Height:</strong> ${camera.height}<br>
         <strong>Position:</strong> ${camera.position.join(", ")}<br>
         <strong>Rotation:</strong> ${camera.rotation.map(row => row.join(", ")).join("<br>")}<br>
         <strong>FX:</strong> ${camera.fx}<br>
-        <strong>FY:</strong> ${camera.fy}
+        <strong>FY:</strong> ${camera.fy}<br>
+        <br>
+        <strong>Real Time:</strong> <br>
+        <strong>Camera Extr:</strong> ${extractCameraExtrFromViewmat(viewMatrix).join("<br>")}<br>
     `;
 }
 
@@ -991,9 +1043,11 @@ async function main() {
     });
     window.addEventListener("keyup", (e) => {
         activeKeys = activeKeys.filter((k) => k !== e.code);
+        displayCameraInfo(camera);
     });
     window.addEventListener("blur", () => {
         activeKeys = [];
+        displayCameraInfo(camera);
     });
 
     window.addEventListener(
@@ -1036,6 +1090,7 @@ async function main() {
             }
 
             viewMatrix = invert4(inv);
+            displayCameraInfo(camera);
         },
         { passive: false },
     );
@@ -1047,6 +1102,7 @@ async function main() {
         startX = e.clientX;
         startY = e.clientY;
         down = e.ctrlKey || e.metaKey ? 2 : 1;
+        displayCameraInfo(camera);
     });
     canvas.addEventListener("contextmenu", (e) => {
         carousel = false;
@@ -1054,6 +1110,7 @@ async function main() {
         startX = e.clientX;
         startY = e.clientY;
         down = 2;
+        displayCameraInfo(camera);
     });
 
     canvas.addEventListener("mousemove", (e) => {
@@ -1075,6 +1132,7 @@ async function main() {
 
             startX = e.clientX;
             startY = e.clientY;
+            displayCameraInfo(camera);
         } else if (down == 2) {
             let inv = invert4(viewMatrix);
             // inv = rotateY(inv, );
@@ -1090,6 +1148,7 @@ async function main() {
 
             startX = e.clientX;
             startY = e.clientY;
+            displayCameraInfo(camera);
         }
     });
     canvas.addEventListener("mouseup", (e) => {
@@ -1097,6 +1156,7 @@ async function main() {
         down = false;
         startX = 0;
         startY = 0;
+        displayCameraInfo(camera);
     });
 
     let altX = 0,
@@ -1119,6 +1179,7 @@ async function main() {
                 altY = e.touches[1].clientY;
                 down = 1;
             }
+            displayCameraInfo(camera);
         },
         { passive: false },
     );
@@ -1184,6 +1245,7 @@ async function main() {
                 startY = e.touches[0].clientY;
                 altY = e.touches[1].clientY;
             }
+            displayCameraInfo(camera);
         },
         { passive: false },
     );
@@ -1194,6 +1256,7 @@ async function main() {
             down = false;
             startX = 0;
             startY = 0;
+            displayCameraInfo(camera);
         },
         { passive: false },
     );
@@ -1397,6 +1460,7 @@ async function main() {
         }
         lastFrame = now;
         requestAnimationFrame(frame);
+        // displayCameraInfo(camera);
     };
 
     frame();

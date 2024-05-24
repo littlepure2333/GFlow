@@ -54,6 +54,7 @@ def main(
     traj_only: bool = False,
     fixed_camera: bool = False,
     traj_num: int = 200,
+    traj_offset: int = 0,
 ) -> None:
     
     frames_sequence = []
@@ -63,6 +64,8 @@ def main(
     frames_center_sequence_traj = []
     frames_depth_sequence_traj = []
     frames_sequence_traj_upon = []
+    sequence_traj = []
+    sequence_traj_occlusion = []
 
     ckpt_paths = sorted(glob.glob(os.path.join(load_path, "ckpt", "*.tar")))
     # print(ckpt_paths)
@@ -90,25 +93,25 @@ def main(
 
     # load the first frame
     gt_image0 = image_path_to_tensor(img_paths[0], resize=resize, blur=blur)
-    trainer = SimpleGaussian(gt_image=gt_image0, num_points=num_points, background=background, depth_scale=depth_scale)
+    trainer = SimpleGaussian(gt_image=gt_image0, num_points=num_points, background=background)
     print("[check] trainer.W", trainer.W)
     print("[check] trainer.H", trainer.H)
     ckpt_paths = sorted(glob.glob(os.path.join(load_path, "ckpt_match", "*.tar")))
     ckpt_paths = sorted(glob.glob(os.path.join(load_path, "ckpt", "*.tar")))
 
+    num_points = len(trainer.get_attribute("xyz"))
+    # traj_num = 200 # 0.4% of the points
+    interval = int(num_points / traj_num)
+    traj_index = range(num_points)[traj_offset::interval]
+    novel_view = True
+
     for i, ckpt_path in enumerate(ckpt_paths):
         print(f"[{i}/{len(ckpt_paths) - 1}] Gaussian splatting {ckpt_path}")
         trainer.load_checkpoint(ckpt_path)
-        if i == 0:
-            num_points = len(trainer.get_attribute("xyz"))
-            # traj_num = 200 # 0.4% of the points
-            interval = int(num_points / traj_num)
-            traj_index = range(num_points)[::interval]
-            # traj_index = range(num_points)[50:100]
-            # help me to choose the index of the trainer.means that the trainer.means[:, 2] > 0.5 & trainer.means[:, 2] < 0.6, and sort them by trainer.means[:, 3]
-            # traj_index = [i for i in range(num_points) if trainer.means[i, 1] > -0.3 and trainer.means[i, 1] < -0.1 and trainer.means[i, 0] > -0.4 and trainer.means[i, 0] < -0.1]
-            # traj_index = sorted(traj_index, key=lambda x: trainer.means[x, 2])[:5] # sort order is from small to large
-            # traj_index = traj_index[:10]
+        if novel_view:
+            trainer.extr = torch.tensor([[0.9851494139489309,-0.0059035800018953765,0.17159772708069657,-2.1233402663005196],
+[-0.013833379525512618,0.9934307632168031,0.11359558224404075,-0.9467144636479741],
+[-0.17114108158768737,-0.1142823977593237,0.9785960677191385,-2.812765723241343]]).to(trainer.device)
         (out_img, out_img_center, out_img_depth, 
          out_img_traj, out_img_traj_upon ) = trainer.eval(
             traj_index=traj_index,

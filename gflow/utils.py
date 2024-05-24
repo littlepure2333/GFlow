@@ -258,6 +258,19 @@ def extract_camera_parameters(intrinsic_matrix, extrinsic_matrix, W, H, img_name
         "fy": fy
     }]
 
+def extract_camera_extr_from_viewmat(viewmat):
+    # Viewmat Size: (4,4)
+    # Extract rotation matrix and translation vector from the extrinsic matrix
+    R = viewmat[:3, :3]
+    t = viewmat[:3, 3]
+    R = R.T
+    t = -R @ t
+    extr = np.zeros((3, 4))
+    extr[:3, :3] = R
+    extr[:3, 3] = t
+    return extr
+
+
 def construct_list_of_attributes():
     l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
     # All channels except the 3 DC

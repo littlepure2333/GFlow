@@ -56,8 +56,8 @@ class SimpleGaussian:
         N = int(num_points)
         self._attributes = {
             "xyz":      torch.rand((N, 3), dtype=torch.float32).cuda() * 2 - 1,
-            "scale":    torch.rand((N, 1), dtype=torch.float32).cuda(),
-            # "scale":    torch.rand((N, 3), dtype=torch.float32).cuda(),
+            # "scale":    torch.rand((N, 1), dtype=torch.float32).cuda(),
+            "scale":    torch.rand((N, 3), dtype=torch.float32).cuda(),
             "rotate":   torch.rand((N, 4), dtype=torch.float32).cuda(), # should be a quaternion
             "opacity":  torch.rand((N, 1), dtype=torch.float32).cuda(),
             "rgb":      torch.rand((N, 3), dtype=torch.float32).cuda()
@@ -73,7 +73,7 @@ class SimpleGaussian:
             return (torch.abs(x) + 1e-8).repeat(1, 3)
         
         self._activations = {
-            # "scale": lambda x: torch.abs(x) + 1e-8,
+            "scale": lambda x: torch.abs(x) + 1e-8,
             "scale": _isotropic,
             "rotate": torch.nn.functional.normalize,
             "opacity": torch.sigmoid,
@@ -220,9 +220,10 @@ class SimpleGaussian:
             raise ValueError(f"Attribute or activation for {name} is not VALID!")
     
     def get_splat_buffer(self):
-        sorted_indices = np.argsort(-np.prod(self.get_attribute("scale").detach().cpu().numpy(), axis=1) / (1 + np.exp(-self.get_attribute("opacity").detach().cpu().T.numpy())))
+        # sorted_indices = np.argsort(-np.prod(self.get_attribute("scale").detach().cpu().numpy(), axis=1) / (1 + np.exp(-self.get_attribute("opacity").detach().cpu().T.numpy())))
         buffer = BytesIO()
-        for idx in sorted_indices[0]:
+        # for idx in sorted_indices[0]:
+        for idx in range(self.get_attribute("xyz").shape[0]):
             position = self.get_attribute("xyz")[idx].detach().cpu().numpy()
             scales = self.get_attribute("scale")[idx].detach().cpu().numpy()
             rot = self.get_attribute("rotate")[idx].detach().cpu().numpy()
@@ -264,6 +265,7 @@ class SimpleGaussian:
             "attributes": self._attributes,
             "intr": self.intr,
             "extr": self.extr,
+            "still_mask": self.still_mask if hasattr(self, 'still_mask') else None,
         }
         if ckpt_name is None:
             ckpt_name = 'ckpt'
@@ -278,11 +280,11 @@ class SimpleGaussian:
             self.splat_file_path = os.path.join(self.dir, "splat", f"{ckpt_name}.splat")
             utils.save_splat_file(splat_data, self.splat_file_path)
             # save ply file
-            # os.makedirs(os.path.join(self.dir, "ply"), exist_ok=True)
-            # self.ply_file_path = os.path.join(self.dir, "ply", f"{ckpt_name}.ply")
-            # ply_elements = self.get_ply_elements()
-            # el = PlyElement.describe(ply_elements, 'vertex')
-            # PlyData([el]).write(self.ply_file_path)
+            os.makedirs(os.path.join(self.dir, "ply"), exist_ok=True)
+            self.ply_file_path = os.path.join(self.dir, "ply", f"{ckpt_name}.ply")
+            ply_elements = self.get_ply_elements()
+            el = PlyElement.describe(ply_elements, 'vertex')
+            PlyData([el]).write(self.ply_file_path)
             # save camera json file
             os.makedirs(os.path.join(self.dir, "json"), exist_ok=True)
             self.json_file_path = os.path.join(self.dir, "json", f"{ckpt_name}.json")
@@ -293,6 +295,8 @@ class SimpleGaussian:
         self._attributes = checkpoint["attributes"]
         self.intr = checkpoint["intr"]
         self.extr = checkpoint["extr"]
+        if 'still_mask' in checkpoint.keys():
+            self.still_mask = checkpoint["still_mask"]
         del checkpoint
         torch.cuda.empty_cache()
     
