@@ -1,6 +1,6 @@
 from typing import Optional
 from pathlib import Path
-from utils import image_path_to_tensor, read_depth, read_camera, process_frames_to_video, process_traj_to_tracks, process_segm_mask, process_occu
+from utils import image_path_to_tensor, read_depth, read_camera, process_frames_to_video, process_traj_to_tracks, process_segm_mask, process_occu, find_closest_point
 from trainer import SimpleGaussian
 from traj_visualizer import TrajVisualizer
 import os
@@ -168,10 +168,43 @@ def main(
         frames_move_center_sequence.append(move_center_np)
     
     # render trajectory
+    tap_vid = False
+    grad_traj = True
     if traj_num:
         num_points = len(trainer.get_attribute("xyz"))
         interval = int(num_points / traj_num)
         traj_index = range(num_points)[traj_offset::interval]
+        if grad_traj:
+            # Set the query points to a grid-like pattern according to specific stride
+            stride = 20
+            density_scale = 2
+            sparse_query_points = []
+            for i in range(0, trainer.H, stride):
+                for j in range(0, trainer.W, stride):
+                    sparse_query_points.append(np.array([j, i]))
+            sparse_query_points = np.array(sparse_query_points)
+            concentrated_query_points = []
+            for i in range(0, trainer.H, stride//density_scale):
+                for j in range(0, trainer.W, stride//density_scale):
+                    concentrated_query_points.append(np.array([j, i]))
+            concentrated_query_points = np.array(concentrated_query_points)
+            uv = trainer.last_uv.detach().cpu().numpy()
+            still_mask = trainer.still_mask.detach().cpu().numpy()
+            sparse_cloest_points = find_closest_point(uv, sparse_query_points)
+            concentrated_cloest_points = find_closest_point(uv, concentrated_query_points)
+            cloest_points_still = sparse_cloest_points[still_mask[sparse_cloest_points]]
+            cloest_points_move = concentrated_cloest_points[~still_mask[concentrated_cloest_points]]
+            cloest_points = np.concatenate([cloest_points_still, cloest_points_move])
+            traj_index = cloest_points.tolist()
+
+        if tap_vid:
+            traj_info = pickle.load(os.path.join(sequence_path, "video.pkl"))
+            query_points = traj_info["points"][:,0,:].copy()
+            query_points[:,0] = query_points[:,0] * trainer.W
+            query_points[:,1] = query_points[:,1] * trainer.H
+            cloest_points = find_closest_point(trainer.last_uv, query_points)
+            traj_index = cloest_points.tolist()
+
         (out_img, out_img_center, out_img_depth, 
          out_img_traj, out_img_traj_upon ) = trainer.eval(
             traj_index=traj_index,
@@ -357,9 +390,17 @@ def main(
     occulasions = process_occu(sequence_traj_occlusion, tracks_traj)
     
 
-    traj_visualizer = TrajVisualizer(save_dir=trainer.dir, pad_value=0, linewidth=3, fps=5, show_first_frame=2)
+    traj_visualizer = TrajVisualizer(save_dir=trainer.dir, pad_value=0, linewidth=1, fps=5, show_first_frame=2)
     # traj_visualizer.visualize(video=frames_video_torch,tracks=tracks_traj, segm_mask=segm_mask, occulasions=occulasions, filename="sequence_traj_vis", compensate_for_camera_motion=True)
     traj_visualizer.visualize(video=frames_video_torch,tracks=tracks_traj, occulasions=occulasions, filename="sequence_traj_vis")
+    if grad_traj:
+        traj_visualizer = TrajVisualizer(save_dir=trainer.dir, pad_value=0, linewidth=1, fps=5, show_first_frame=2)
+        # traj_visualizer.visualize(video=frames_video_torch,tracks=tracks_traj, segm_mask=segm_mask, occulasions=occulasions, filename="sequence_traj_vis", compensate_for_camera_motion=True)
+        traj_visualizer.visualize(video=frames_video_torch,tracks=tracks_traj[:,:,:cloest_points_still.shape[0],:], occulasions=occulasions, filename="sequence_traj_vis_still")
+        traj_visualizer = TrajVisualizer(save_dir=trainer.dir, pad_value=0, linewidth=1, fps=5, show_first_frame=2)
+        # traj_visualizer.visualize(video=frames_video_torch,tracks=tracks_traj, segm_mask=segm_mask, occulasions=occulasions, filename="sequence_traj_vis", compensate_for_camera_motion=True)
+        traj_visualizer.visualize(video=frames_video_torch,tracks=tracks_traj[:,:,-len(cloest_points_move):,:], occulasions=occulasions, filename="sequence_traj_vis_move")
+
 
     
 def save_video(mp4_path, frames, fps):

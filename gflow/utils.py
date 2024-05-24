@@ -234,14 +234,17 @@ def extract_camera_parameters(intrinsic_matrix, extrinsic_matrix, W, H, img_name
     [fx, fy, cx, cy] = intrinsic_matrix.detach().cpu().numpy().tolist()
 
     # Extract rotation matrix and translation vector from the extrinsic matrix
-    R = extrinsic_matrix[:, :3]
-    R = np.linalg.inv(R.detach().cpu().numpy())
+    R = extrinsic_matrix[:3, :3]
+    t = extrinsic_matrix[:3, 3]
+    # R = np.linalg.inv(R.detach().cpu().numpy())
 
     # print(R)
-    t = extrinsic_matrix[:, 3]
+    # t = extrinsic_matrix[:, 3]
 
     # Calculate camera position in world coordinates
-    camera_position = R.dot(t.detach().cpu().numpy())
+    # camera_position = R.dot(t.detach().cpu().numpy())
+    camera_position = -R.T @ t
+    camera_rotation = R.T
 
     # Return all extracted parameters
     return [{
@@ -250,7 +253,7 @@ def extract_camera_parameters(intrinsic_matrix, extrinsic_matrix, W, H, img_name
         "width": W,
         "height": H,
         "position": camera_position.tolist(),
-        "rotation": R.tolist(),
+        "rotation": camera_rotation.tolist(),
         "fx": fx,
         "fy": fy
     }]
@@ -260,6 +263,8 @@ def construct_list_of_attributes():
     # All channels except the 3 DC
     for i in range(3):
         l.append('f_dc_{}'.format(i))
+    # for i in range(3):
+        # l.append('f_rest_{}'.format(i))
     l.append('opacity')
     for i in range(3):
         l.append('scale_{}'.format(i))
@@ -427,3 +432,6 @@ def process_occu(sequence_traj_occlusion, tracks):
             occulasions[0, i, j] = not moving_part[j] and move_seg[round(tracks[0, i, j, 1].item()), round(tracks[0, i, j, 0].item())]
     return occulasions
 
+def find_closest_point(uv, coords):
+    dists = np.sum((uv[:, None] - coords[None]) ** 2, axis=-1)
+    return np.argmin(dists, axis=0)
