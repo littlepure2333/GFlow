@@ -112,6 +112,7 @@ class TrajVisualizer:
         query_frame: int = 0,
         save_video: bool = True,
         compensate_for_camera_motion: bool = False,
+        still_length: int = 0,
     ):
         if compensate_for_camera_motion:
             assert segm_mask is not None
@@ -141,6 +142,7 @@ class TrajVisualizer:
             gt_tracks=gt_tracks,
             query_frame=query_frame,
             compensate_for_camera_motion=compensate_for_camera_motion,
+            still_length=still_length,
         )
         if save_video:
             self.save_video(res_video, filename=filename, writer=writer, step=step)
@@ -183,6 +185,7 @@ class TrajVisualizer:
         gt_tracks=None,
         query_frame: int = 0,
         compensate_for_camera_motion=False,
+        still_length: int = 0,
     ):
         B, T, C, H, W = video.shape
         _, _, N, D = tracks.shape
@@ -216,6 +219,17 @@ class TrajVisualizer:
                     color = self.color_map(norm(tracks[query_frame, n, 1]))
                     color = np.array(color[:3])[None] * 255
                     vector_colors[:, n] = np.repeat(color, T, axis=0)
+                if still_length > 0:
+                    y_move_min, y_move_max = (
+                        tracks[query_frame, still_length:, 1].min(),
+                        tracks[query_frame, still_length:, 1].max(),
+                    )
+                    move_norm = plt.Normalize(y_move_min, y_move_max)
+                    for n in range(still_length, N):
+                        color = self.color_map(move_norm(tracks[query_frame, n, 1]))
+                        color = np.array(color[:3])[None] * 255
+                        vector_colors[:, n] = np.repeat(color, T, axis=0)
+                        
             else:
                 # color changes with time
                 for t in range(T):

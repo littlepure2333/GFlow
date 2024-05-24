@@ -392,7 +392,7 @@ def main(
 
     traj_visualizer = TrajVisualizer(save_dir=trainer.dir, pad_value=0, linewidth=1, fps=5, show_first_frame=2)
     # traj_visualizer.visualize(video=frames_video_torch,tracks=tracks_traj, segm_mask=segm_mask, occulasions=occulasions, filename="sequence_traj_vis", compensate_for_camera_motion=True)
-    traj_visualizer.visualize(video=frames_video_torch,tracks=tracks_traj, occulasions=occulasions, filename="sequence_traj_vis")
+    traj_visualizer.visualize(video=frames_video_torch,tracks=tracks_traj, occulasions=occulasions, filename="sequence_traj_vis", still_length=cloest_points_still.shape[0])
     if grad_traj:
         traj_visualizer = TrajVisualizer(save_dir=trainer.dir, pad_value=0, linewidth=1, fps=5, show_first_frame=2)
         # traj_visualizer.visualize(video=frames_video_torch,tracks=tracks_traj, segm_mask=segm_mask, occulasions=occulasions, filename="sequence_traj_vis", compensate_for_camera_motion=True)
