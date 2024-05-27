@@ -168,7 +168,7 @@ class TrajVisualizer:
             video_writer = imageio.get_writer(save_path, fps=self.fps)
 
             # Write frames to the video file
-            for frame in wide_list[2:-1]:
+            for frame in wide_list[:-1]:
                 video_writer.append_data(frame)
 
             video_writer.close()
