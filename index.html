@@ -1,1 +1,516 @@
-<p> gflow test</p>
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="description" content="GFlow: Recovering 4D World from Monocular Video">
+  <meta name="keywords" content="motion, tracking">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GFlow: Recovering 4D World from Monocular Video</title>
+
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-EDMDL9HPQP"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+  
+    gtag('config', 'G-EDMDL9HPQP');
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+
+  <link href="https://fonts.googleapis.com/css?family=Google+Sans|Noto+Sans|Castoro"
+        rel="stylesheet">
+
+  <link rel="stylesheet" href="./static/css/bulma.min.css">
+  <link rel="stylesheet" href="./static/css/bulma-carousel.min.css">
+  <link rel="stylesheet" href="./static/css/bulma-slider.min.css">
+  <link rel="stylesheet" href="./static/css/fontawesome.all.min.css">
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+  <link rel="stylesheet" href="./static/css/index.css">
+
+  <!-- <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script> -->
+  <script src="./static/js/jquery-3.6.4.min.js"></script>
+  <script defer src="./static/js/fontawesome.all.min.js"></script>
+  <script src="./static/js/bulma-carousel.min.js"></script>
+  <script src="./static/js/bulma-slider.min.js"></script>
+  <script src="./static/js/lazy.js"></script>
+  <script src="./static/js/faster.js"></script>
+  <script src="./static/js/index.js"></script>
+</head>
+<body>
+
+
+<nav class="navbar" role="navigation" aria-label="main navigation">
+  <div class="navbar-brand">
+    <a role="button" class="navbar-burger" aria-label="menu" aria-expanded="false">
+      <span aria-hidden="true"></span>
+      <span aria-hidden="true"></span>
+      <span aria-hidden="true"></span>
+    </a>
+  </div>
+  <div class="navbar-menu">
+    <div class="navbar-start" style="flex-grow: 1; justify-content: center;">
+      <a class="navbar-item" href="https://littlepure2333.github.io/home">
+      <span class="icon">
+          <i class="fas fa-home"></i>
+      </span>
+      </a>
+
+      <div class="navbar-item has-dropdown is-hoverable">
+        <a class="navbar-link">
+          More Research
+        </a>
+        <div class="navbar-dropdown">
+          <a class="navbar-item" href="https://littlepure2333.github.io/GFlow">
+            GFlow
+          </a>
+          <a class="navbar-item" href="https://littlepure2333.github.io/MindBridge">
+            MindBridge
+          </a>
+          <!-- <a class="navbar-item" href="https://latentfusion.github.io">
+            LatentFusion
+          </a>
+          <a class="navbar-item" href="https://photoshape.github.io">
+            PhotoShape
+          </a> -->
+        </div>
+      </div>
+    </div>
+
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="hero-body">
+    <div class="container is-max-desktop">
+      <div class="columns is-centered">
+        <div class="column has-text-centered">
+          <h1 class="title is-2 publication-title"><span style="color: rgb(0, 136, 255);">G</span><span style="color: rgb(43, 200, 70);">Flow</span>: Recovering 4D World from Monocular Video</h1>
+          <div class="is-size-5 publication-authors">
+            <span class="author-block">
+              <a href="https://littlepure2333.github.io/home">Shizun Wang</a>,</span>
+            <span class="author-block">
+              <a href="https://adamdad.github.io/">Xingyi Yang</a>,</span>
+            <span class="author-block">
+              <a href="https://florinshen.github.io/">Qiuhong Shen</a>,
+            </span>
+            <span class="author-block">
+              <a href="https://github.com/RoyMikeJiang">Zhenxiang Jiang</a>,
+            </span>
+            <span class="author-block">
+              <a href="https://sites.google.com/site/sitexinchaowang/">Xinchao Wang</a>
+            </span>
+          </div>
+
+          <div class="is-size-5 publication-authors">
+            <span class="author-block">National University of Singapore</span>
+          </div>
+
+          <div class="is-size-5 publication-authors" style="margin-top: 12px;">
+            <span class="author-block">arXiv 2024</span>
+          </div>
+
+          <div class="column has-text-centered">
+            <div class="publication-links">
+              <!-- PDF Link. -->
+              <span class="link-block">
+                <a href="https://arxiv.org/abs/2404.07850"
+                   class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon">
+                      <i class="ai ai-arxiv"></i>
+                  </span>
+                  <span>arXiv</span>
+                </a>
+              </span>
+              <!-- Code Link. -->
+              <span class="link-block">
+                <a href="https://littlepure2333.github.io/GFlow"
+                   class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon">
+                      <i class="fab fa-github"></i>
+                  </span>
+                  <span>Code (Coming Soon)</span>
+                  </a>
+              </span>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+    .video-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr); /* Four columns */
+        grid-template-rows: repeat(2, 1fr); /* Two rows */
+        gap: 8px 4px; /* Gap between videos */
+        width: 80%; /* Set the container width to 80% */
+        margin: 0 auto; /* Center the container horizontally */
+    }
+
+    .video-grid video {
+        width: 100%; /* Videos fill the container width */
+        height: auto;
+    }
+</style>
+
+<section>
+  <div class="columns is-centered has-text-centered">
+    <p style="margin-top: 10px; margin-bottom: 10px; text-align: center; font-size:22px;">
+     <!-- OmniMotion jointly tracks all points in a video across all frames, <i>even through occlusions</i>.</p> -->
+     <em><b>GFlow</b> represents the video as a 4D explicit representation, entailing a <span style="color: rgb(43, 200, 70);">flow</span> of <span style="color: rgb(0, 136, 255);">Gaussian splatting</span> through space and time.</em>
+     <br>
+    </p>
+  </div>
+  <!-- <div class="container is-max-desktop">
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-four-fifths">
+        <div class="content has-text-justified">
+          <p>
+            <br>
+            <em><b>GFlow</b> represents the video as a 4D explicit representation, entailing a flow of Gaussian splatting through space and time.</em>
+          </p>
+        </div>
+      </div>
+    </div>
+  </div> -->
+  <div class="video-grid">
+      <div>
+          <video muted playsinline loop preload="auto">
+              <source src="static/videos/car_turn/sequence.mp4" type="video/mp4">
+          </video>
+          <p style="text-align: center;"> A) Reconstructed frames </p>
+        </div>
+        <div>
+          <video muted playsinline loop preload="auto">
+            <source src="static/videos/car_turn/sequence_traj_vis.mp4" type="video/mp4">
+          </video>
+          <p style="text-align: center;"> B) 2D tracking </p>
+        </div>
+        <div>
+          <video muted playsinline loop preload="auto">
+            <source src="static/videos/car_turn/sequence_traj_upon.mp4" type="video/mp4">
+          </video>
+          <p style="text-align: center;"> C) 2D tracking </p>
+        </div>
+        <div>
+          <video muted playsinline loop preload="auto">
+            <source src="static/videos/car_turn/sequence_move_seg.mp4" type="video/mp4">
+          </video>
+          <p style="text-align: center;"> D) Zero-shot segmentation of moving object </p>
+        </div>
+        <div>
+          <video muted playsinline loop preload="auto">
+            <source src="static/videos/car_turn/sequence_center.mp4" type="video/mp4">
+          </video>
+          <p style="text-align: center;"> E) Center of all Gaussians </p>
+        </div>
+        <div>
+          <video muted playsinline loop preload="auto">
+            <source src="static/videos/car_turn/sequence_move_center.mp4" type="video/mp4">
+          </video>
+          <p style="text-align: center;"> F) Center of moving Gaussians </p>
+        </div>
+        <div>
+          <video muted playsinline loop preload="auto">
+            <source src="static/videos/car_turn/sequence_still_center.mp4" type="video/mp4">
+          </video>
+          <p style="text-align: center;"> G) Center of still Gaussians </p>
+        </div>
+        <div>
+          <video muted playsinline loop preload="auto">
+            <source src="static/videos/car_turn/sequence_depth.mp4" type="video/mp4">
+          </video>
+          <p style="text-align: center;"> H) Consistent depth </p>
+      </div>
+  </div>
+  
+</section>
+
+
+<script>
+  window.onload = function() {
+      var videos = document.getElementsByTagName('video');
+      for(var i = 0; i < videos.length; i++){
+          videos[i].play();
+      }
+  }
+  </script>
+
+<br>
+
+<section class="section hero is-light">
+  <div class="container is-max-desktop">
+    <!-- Abstract. -->
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-four-fifths">
+        <h2 class="title is-3">Abstract</h2>
+        <div class="content has-text-justified">
+          <p>
+            Reconstructing 4D scenes from video inputs is a crucial yet challenging task. 
+            Conventional methods usually rely on the assumptions of multi-view video inputs, known camera parameters, or static scenes, all of which are typically absent under in-the-wild scenarios.
+            In this paper, we relax all these constraints and tackle a highly ambitious but practical task, which we termed as <b>AnyV4D: we assume only one monocular video is available without any camera parameters as input, and we aim to recover the dynamic 4D world alongside the camera poses.</b>
+            To this end, we  introduce <b>GFlow</b>, a new framework that utilizes only 2D priors (depth and optical flow) to <b>lift a video (3D) to a 4D explicit representation, entailing a flow of Gaussian splatting through space and time. </b>
+            GFlow first clusters the scene into still and moving parts, then applies a sequential optimization process that optimizes camera poses and the dynamics of 3D Gaussian points based on 2D priors and scene clustering, ensuring fidelity among neighboring points and smooth movement across frames.
+            Since dynamic scenes always introduce new content, we also propose a new pixel-wise densification strategy for Gaussian points to integrate new visual content. 
+            Moreover, GFlow transcends the boundaries of mere 4D reconstruction; it also enables tracking of any points across frames without the need for prior training and segments moving objects from the scene in an unsupervised way.
+            Additionally, the camera poses of each frame can be derived from GFlow, allowing for rendering novel views of a video scene through changing camera pose. By employing the explicit representation, we may readily conduct scene-level or object-level editing as desired, underscoring its versatility and power.
+
+          </p>
+        </div>
+      </div>
+    </div>
+    <br>
+</section>
+
+
+<style>
+    .video-grid-two-cols {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr); /* Two columns */
+        gap: 10px; /* Gap between videos */
+        width: 58%; /* Set the container width to 60% */
+        margin: 0 auto; /* Center the container horizontally */
+    }
+
+    .video-grid-two-cols video {
+        width: 100%; /* Videos fill the container width */
+        height: auto;
+    }
+</style>
+
+<section class="section">
+  <div class="container is-max-desktop">
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-full-width">
+        <h2 class="title is-3">Overview</h2>
+        <img src="./static/images/gflow_method.png" alt="method" style="width: 100%; height: auto;">
+        <div class="content has-text-justified">
+          <p>
+            <b>A)</b> Given a monocular video input consisting of image sequence \(\{I_i\}\), the associated 
+            depth \(\{D_i\}\), optical flow \(\{F_i\}\) and camera intrinsic \(K\) are obtained using off-the-shelf prior. 
+            <b>B)</b> For each frame , GFLow first clustering the scene into still part \(G_i^{s}\) and moving 
+            part \(G_i^{m}\). Then optimization process in GFlow consists of two steps: <b>C1)</b> Only the camera 
+            pose \(P_t\) is optimized by aligning the depth and optical flow within the still cluster.
+             <b>C2)</b> Under the optimized camera pose \(P_t^*\), the Gaussian points \(\{G_i\}\) are optimized and 
+             densified based on RGB, depth, optical flow and the two scene clusters. <b>D)</b> The same procedure 
+             of steps B, C1, and C2 loops for the next frame. The colorful graphics under the dashed line represent 
+             the variables involved in the optimization.
+          </p>
+        </div>
+      </div>
+    </div>
+    <br>
+  </div>
+  <div class="video-grid-two-cols">
+      <div>
+          <video class="carousel-video" controls muted loop playsinline data-src="static/videos/car_turn/sequence_optimize.mp4" type="video/mp4">
+          </video>
+          <p style="text-align: center;">Optimization illustration of frames</p>
+        </div>
+        <div>
+          <video class="carousel-video" controls muted loop playsinline data-src="static/videos/car_turn/sequence_center_optimize.mp4" type="video/mp4">
+          </video>
+          <p style="text-align: center;">Optimization illustration of centers</p>
+        </div>
+  </div>
+</section>
+
+
+<br>
+<div class="columns is-centered has-text-centered">
+  <h2 class="title is-3">More Results</h2>
+</div>
+
+<section class="hero is-light is-small">
+  <div class="hero-body">
+    <div class="container">
+      <div class="carousel-extra-padding">
+        <div id="results-carousel" class="carousel results-carousel">
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/train/sequence_traj_upon.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/car-roundabout/sequence_traj_upon.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/paraglide/sequence_traj_upon.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/drift-turn/sequence_traj_upon.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/e-bike/sequence_traj_upon.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/scooter-grey/sequence_traj_upon.mp4" type="video/mp4">
+            </video>
+          </div>
+        </div>
+      </div>
+    </div>
+  <p style="margin-top: 5px; text-align: center; margin-bottom: -15px;">3D tracking</p>
+  </div>
+</section>
+<br>
+
+<section class="hero is-light is-small">
+  <div class="hero-body">
+    <div class="container">
+      <div class="carousel-extra-padding">
+        <div id="results-carousel" class="carousel results-carousel">
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/paraglide/sequence_traj_vis.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/e-bike/sequence_traj_vis.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/grass-chopper/sequence_traj_vis_move.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/train/sequence_traj_vis.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/car-roundabout/sequence_traj_vis.mp4" type="video/mp4">
+            </video>
+          </div>
+        </div>
+      </div>
+    </div>
+  <p style="margin-top: 5px; text-align: center; margin-bottom: -15px;">2D tracking</p>
+  </div>
+</section>
+<br>
+
+<section class="hero is-light is-small">
+  <div class="hero-body">
+    <div class="container">
+      <div class="carousel-extra-padding">
+        <div id="results-carousel" class="carousel results-carousel">
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/bmx-bumps/sequence_move_seg.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/rollerblade/sequence_move_seg.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/car-roundabout/sequence_move_seg.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/train/sequence_move_seg.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/e-bike/sequence_move_seg.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/scooter-grey/sequence_move_seg.mp4" type="video/mp4">
+            </video>
+          </div>
+        </div>
+      </div>
+    </div>
+  <p style="margin-top: 5px; text-align: center; margin-bottom: -15px;">Zero-shot segmentation</p>
+  </div>
+</section>
+<br>
+
+<section class="hero is-light is-small">
+  <div class="hero-body">
+    <div class="container">
+      <div class="carousel-extra-padding">
+        <div id="results-carousel" class="carousel results-carousel">
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/e-bike/sequence_center.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/scooter-grey/sequence_center.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/paraglide/sequence_center.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/car-roundabout/sequence_center.mp4" type="video/mp4">
+            </video>
+          </div>
+        </div>
+      </div>
+    </div>
+  <p style="margin-top: 5px; text-align: center; margin-bottom: -15px;">Center of Gaussians</p>
+  </div>
+</section>
+<br>
+
+<section class="hero is-light is-small">
+  <div class="hero-body">
+    <div class="container">
+      <div class="carousel-extra-padding">
+        <div id="results-carousel" class="carousel results-carousel">
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/car-roundabout/sequence_depth.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/train/sequence_depth.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/grass-chopper/sequence_depth.mp4" type="video/mp4">
+            </video>
+          </div>
+          <div class="item">
+            <video class="carousel-video" controls muted loop playsinline height="100%" data-src="./static/videos/drift-turn/sequence_depth.mp4" type="video/mp4">
+            </video>
+          </div>
+        </div>
+      </div>
+    </div>
+  <p style="margin-top: 5px; text-align: center; margin-bottom: -15px;">Consistent Depth</p>
+  </div>
+</section>
+<br>
+
+
+
+<footer class="footer">
+  <div align="center" class="container">
+    <div class="columns is-centered">
+        <div class="content">
+          <p>
+            This website is licensed under a <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/">Creative
+            Commons Attribution-ShareAlike 4.0 International License</a>.
+          </p>
+          <p>
+            A big thanks to <a
+              href="https://github.com/nerfies/nerfies.github.io">Nerifies</a> for generously sharing the website template.
+          </p>
+            <!-- This website is borrowed from <a href="https://github.com/nerfies/nerfies.github.io">nerfies</a>. -->
+        </div>
+      </div>
+    </div>
+</footer>
+
+
+</body>
+</html>
