@@ -1,3 +1,11 @@
 [submodule "third_party/glm"]
 	path = third_party/glm
 	url = https://github.com/g-truc/glm.git
+
+[submodule "third_party/dust3rd"]
+	path = third_party/dust3rd
+	url = https://github.com/naver/dust3r.git
+
+[submodule "third_party/unimatch"]
+	path = third_party/unimatch
+	url = https://github.com/autonomousvision/unimatch.git
