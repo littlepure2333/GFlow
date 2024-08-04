@@ -1,7 +1,11 @@
-cd third_party/dust3r
+gpu_id=0
+input_dir="/home/wangshizun/projects/gflow/data/car-turn/car-turn-test"
+seg_size=200
+scene_graph="swin"
 
-gpu_id=7
-input_dir="/home/wangshizun/projects/msplat/images/car-turn/car-turn"
-seg_size=10
+cd utility/
 
-bash dust3r.sh $gpu_id $input_dir $seg_size
+CUDA_VISIBLE_DEVICES=$gpu_id python depth_dust3r.py \
+--input_dir $input_dir \
+--seg_size $seg_size \
+--scene_graph $scene_graph

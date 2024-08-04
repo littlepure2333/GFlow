@@ -1,6 +1,6 @@
 from typing import Optional
 from pathlib import Path
-from utils import image_path_to_tensor, read_depth, read_camera, process_frames_to_video, process_traj_to_tracks, process_segm_mask, process_occu, find_closest_point
+from utils import image_path_to_tensor, read_depth, read_camera, read_mask, process_frames_to_video, process_traj_to_tracks, process_segm_mask, process_occu, print_color, find_closest_point
 from trainer import SimpleGaussian
 from traj_visualizer import TrajVisualizer
 import os
@@ -11,27 +11,12 @@ import numpy as np
 from typing import Literal
 from helper import readFlow
 import msplat
+import time
+from torch.nn import MaxPool2d
+import cv2
 
-# TODO background augmentation
+# [ ] TODO background augmentation
 
-
-def print_color(msg, color="green"):
-    if color == "red":
-        print("\033[91m {}\033[00m".format(msg))
-    elif color == "green":
-        print("\033[92m {}\033[00m".format(msg))
-    elif color == "yellow":
-        print("\033[93m {}\033[00m".format(msg))
-    elif color == "blue":
-        print("\033[94m {}\033[00m".format(msg))
-    elif color == "purple":
-        print("\033[95m {}\033[00m".format(msg))
-    elif color == "cyan":
-        print("\033[96m {}\033[00m".format(msg))
-    elif color == "white":
-        print("\033[97m {}\033[00m".format(msg))
-    else:
-        print(msg)
 
 def main(
     height: int = 256,
@@ -59,7 +44,7 @@ def main(
     lambda_mov: float = 0.,
     lambda_rig: float = 0.,
     lambda_flow: float = 0.,
-    background: Literal["black", "white"] = "black",
+    background: Literal["black", "white", "cyan"] = "black",
     camera_first: bool = False,
     iterations_camera: int = 10,
     frame_start: int = 0,
@@ -86,6 +71,8 @@ def main(
     slow_means: bool = False,
     traj_num: int = 0,
     traj_offset: int = 0,
+    eps: float = 10, 
+    min_samples: float = 20,
 ) -> None:
     
     frames_sequence_optimize = []
@@ -102,12 +89,13 @@ def main(
     frames_sequence_traj_upon = []
     sequence_traj = []
     sequence_traj_occlusion = []
+    frames_move_seg = []
 
 
     # read all images(png, jpg, ...) in the folder and sort them
     img_paths = sorted(Path(sequence_path).glob("*.png")) + sorted(Path(sequence_path).glob("*.jpg"))
     if frame_range == -1:
-        frame_range = len(img_paths)
+        frame_range = len(img_paths)-1
     img_depth_paths = sorted(Path(str(sequence_path)+'_depth_dust3r').glob("*.npy"))
     # img_depth_paths = sorted(Path(str(sequence_path)+'_depth_ZoeDepth').glob("*.npy"))
     # img_depth_paths = sorted(Path(str(sequence_path)+'_depth').glob("*.png")) + sorted(Path(str(sequence_path)+'_depth').glob("*.jpg"))
@@ -117,12 +105,14 @@ def main(
     img_occ_paths = img_occ_paths[frame_start:frame_start+frame_range-1][::skip_interval]
     flow_paths = sorted(Path(str(sequence_path)+'_flow').glob("*pred.flo"))
     flow_paths = flow_paths[frame_start:frame_start+frame_range][::skip_interval]
+    mask_paths = sorted(Path(str(sequence_path)+'_mask').glob("*.png"))
+    mask_paths = mask_paths[frame_start:frame_start+frame_range][::skip_interval]
+    mask_exist = len(mask_paths) > 0
     camera_paths = sorted(Path(str(sequence_path)+'_camera_dust3r').glob("*.json"))
     camera_paths = camera_paths[frame_start:frame_start+frame_range][::skip_interval]
     focal, pp, extr_list = read_camera(camera_paths)
-    depth_scale = focal / 20
     
-
+    start_time = time.time()
     # gt_images = [image_path_to_tensor(img_path, resize=resize, blur=blur) for img_path in img_paths]
     # gt_depths = [image_path_to_tensor(img_depth_path, resize=resize, blur=blur) / 255.0  for img_depth_path in img_depth_paths]
 
@@ -130,15 +120,21 @@ def main(
     # frame0 = gt_images[0]
     save_name0 = os.path.basename(img_paths[0]).split('.')[0]
     gt_image0 = image_path_to_tensor(img_paths[0], resize=resize, blur=blur)
+    H, W = gt_image0.shape[-2:]
+    # depth_scale = float(focal) / float(H)
+    # [ ] TODO decide the scale by distance 
+    depth_scale = float(focal) / 20.
+    # depth_offset = 10.
+    # depth_scale = float(focal)
     # gt_depth0 = image_path_to_tensor(img_depth_paths[0], resize=resize, blur=blur)
     gt_depth0 = read_depth(img_depth_paths[0], resize=resize, depth_scale=depth_scale, depth_offset=depth_offset).unsqueeze(-1)
     gt_flow0 = readFlow(flow_paths[0], resize=resize, blur=blur)
     trainer = SimpleGaussian(gt_image=gt_image0, gt_depth=gt_depth0, gt_flow=gt_flow0,
-                             num_points=num_points, background=background)
+                             num_points=num_points, background=background, sequence_path=sequence_path)
     trainer.load_camera(focal, pp)
     # trainer.load_camera(focal, pp, extr_list[0])
     trainer.init_gaussians_from_image(gt_image=gt_image0, gt_depth=gt_depth0, num_points=num_points)
-    frames, frames_center, frames_depth, still_rgb_np, still_center_np, move_rgb_np, move_center_np = trainer.train(
+    frames, frames_center, frames_depth, still_rgb_np, still_center_np, move_rgb_np, move_center_np, move_seg = trainer.train(
         iterations=iterations_first,
         # lr=0.,
         lr=lr,
@@ -154,6 +150,8 @@ def main(
         densify_times=densify_times,
         densify_interval=densify_interval,
         grad_threshold=grad_threshold,
+        eps=eps,
+        min_samples=min_samples,
     )
     frames_sequence_optimize += frames
     frames_center_sequence_optimize += frames_center
@@ -161,40 +159,66 @@ def main(
     frames_sequence.append(frames[-1])
     frames_center_sequence.append(frames_center[-1])
     frames_depth_sequence.append(frames_depth[-1])
+    frames_move_seg.append(move_seg)
     if still_rgb_np is not None:
         frames_still_sequence.append(still_rgb_np)
         frames_still_center_sequence.append(still_center_np)
         frames_move_sequence.append(move_rgb_np)
         frames_move_center_sequence.append(move_center_np)
+    if mask_exist:
+        mask0 = read_mask(mask_paths[0]).to(trainer.device)
+        trainer.init_mask_prompt_pts(mask0, ckpt_name=save_name0)
     
-    # render trajectory
     tap_vid = False
     grad_traj = True
+
+    # render trajectory
     if traj_num:
         num_points = len(trainer.get_attribute("xyz"))
         interval = int(num_points / traj_num)
         traj_index = range(num_points)[traj_offset::interval]
+
         if grad_traj:
+            erosion_kernel = np.ones((10,10),np.uint8)
+            move_seg = trainer.move_seg
+            move_seg_erosion = cv2.erode(move_seg, erosion_kernel, iterations = 1)
+
+            still_seg = 255 - move_seg
+            still_seg_erosion = cv2.erode(still_seg, erosion_kernel, iterations = 1)
+
             # Set the query points to a grid-like pattern according to specific stride
-            stride = 20
-            density_scale = 2
+            stride_still = 100
+            stride_moving = 20
             sparse_query_points = []
-            for i in range(0, trainer.H, stride):
-                for j in range(0, trainer.W, stride):
-                    sparse_query_points.append(np.array([j, i]))
+            for i in range(stride_still, trainer.H, stride_still):
+                for j in range(stride_still, trainer.W, stride_still):
+                    if still_seg_erosion[i, j]: # within still region
+                    # if True:
+                        sparse_query_points.append(np.array([j, i]))
+                        # print("add still")
             sparse_query_points = np.array(sparse_query_points)
             concentrated_query_points = []
-            for i in range(0, trainer.H, stride//density_scale):
-                for j in range(0, trainer.W, stride//density_scale):
-                    concentrated_query_points.append(np.array([j, i]))
+            for i in range(stride_moving, trainer.H-stride_moving, stride_moving):
+                for j in range(stride_moving, trainer.W-stride_moving, stride_moving):
+                    if move_seg_erosion[i, j]: # within moving region
+                    # if True:
+                        concentrated_query_points.append(np.array([j, i]))
+                        # print("add moving")
+            
             concentrated_query_points = np.array(concentrated_query_points)
             uv = trainer.last_uv.detach().cpu().numpy()
             still_mask = trainer.still_mask.detach().cpu().numpy()
+            # erode the still mask
+            # still_mask = -MaxPool2d(kernel_size=5, stride=1, padding=2)(-still_mask.float())
+            # dilate the still mask
+            # still_mask = MaxPool2d(kernel_size=5, stride=1, padding=2)(still_mask)
             sparse_cloest_points = find_closest_point(uv, sparse_query_points)
             concentrated_cloest_points = find_closest_point(uv, concentrated_query_points)
             cloest_points_still = sparse_cloest_points[still_mask[sparse_cloest_points]]
             cloest_points_move = concentrated_cloest_points[~still_mask[concentrated_cloest_points]]
+            split_interval = cloest_points_still.shape[0]
             cloest_points = np.concatenate([cloest_points_still, cloest_points_move])
+            print("cloest_points.shape", cloest_points.shape)
             traj_index = cloest_points.tolist()
 
         if tap_vid:
@@ -208,9 +232,10 @@ def main(
         (out_img, out_img_center, out_img_depth, 
          out_img_traj, out_img_traj_upon ) = trainer.eval(
             traj_index=traj_index,
-            line_scale=0.2, 
+            line_scale=0.5, 
             point_scale=2., 
-            alpha=0.8
+            alpha=0.8,
+            split_interval=split_interval,
         )
         frames_sequence_traj.append(out_img_traj)
         frames_sequence_traj_upon.append(out_img_traj_upon)
@@ -230,7 +255,7 @@ def main(
     for i, img_path in enumerate(img_paths[1:]):
         save_name = os.path.basename(img_path).split('.')[0]
         print_color(f"[{i+1}/{len(img_paths) - 1}] fitting {img_path}")
-        trainer.load_checkpoint(trainer.checkpoint_path)
+        # trainer.load_checkpoint(trainer.checkpoint_path)
         gt_image = image_path_to_tensor(img_path, resize=resize, blur=blur)
         # gt_depth = image_path_to_tensor(img_depth_paths[i+1], resize=resize, blur=blur)
         gt_depth = read_depth(img_depth_paths[i+1], resize=resize, depth_scale=depth_scale, depth_offset=depth_offset).unsqueeze(-1)
@@ -244,17 +269,18 @@ def main(
 
         if camera_first:
             print_color(f"[{i+1}/{len(img_paths) - 1}] fitting camera-only first.................")
-            frames, frames_center, frames_depth, still_rgb_np, still_center_np, move_rgb_np, move_center_np = trainer.train(
+            frames, frames_center, frames_depth, still_rgb_np, still_center_np, move_rgb_np, move_center_np, move_seg = trainer.train(
                 iterations=iterations_camera,
                 # lr=lr,
-                lr=0.,
+                # lr=0.,
                 # lr_rgbs=lr_rgbs,
                 lr_camera=lr_camera_after,
                 save_imgs=True,
                 save_videos=False,
                 save_ckpt=True,
                 ckpt_name=save_name,
-                lambda_rgb=0.,
+                # lambda_rgb=0.,
+                lambda_rgb=lambda_rgb,
                 lambda_depth=lambda_depth,
                 # lambda_depth=0.,
                 lambda_var=lambda_var,
@@ -276,12 +302,12 @@ def main(
             # print_color("[check] depth_scale", trainer.depth_scale)
             print_color(f"[check] depth far, near {trainer.last_depth[trainer.last_depth>0].max()} {trainer.last_depth[trainer.last_depth>0].min()}")
             print_color(f"[check] camera intr: \n {trainer.intr}")
-            print_color(f"[check] camera extr: \n {trainer.extr}")
+            print_color(f"[check] camera extr: \n {trainer.get_extr()}")
 
         if iterations_after > 0:
             # print_color(f"[{i+1}/{len(img_paths) - 1}] Rehearshal stage for new points.................")
             print_color(f"[{i+1}/{len(img_paths) - 1}] Optimize all .................")
-            frames, frames_center, frames_depth, still_rgb_np, still_center_np, move_rgb_np, move_center_np = trainer.train(
+            frames, frames_center, frames_depth, still_rgb_np, still_center_np, move_rgb_np, move_center_np, move_seg = trainer.train(
                 iterations=iterations_after,
                 lr=lr_after,
                 # lr_camera=lr_camera_after,
@@ -304,6 +330,8 @@ def main(
                 grad_threshold=grad_threshold_after,
                 # mask=None,
                 mask=occ_mask,
+                eps=eps,
+                min_samples=min_samples,
                 # mask=occ_mask.permute(1, 2, 0),
                 # slow_color=slow_color,
                 # slow_means=slow_means,
@@ -313,7 +341,7 @@ def main(
         # print_color("[check] depth_scale", trainer.depth_scale)
         print_color(f"[check] depth far, near {trainer.last_depth[trainer.last_depth>0].max()} {trainer.last_depth[trainer.last_depth>0].min()}")
         print_color(f"[check] camera intr: \n {trainer.intr}")
-        print_color(f"[check] camera extr: \n {trainer.extr}")
+        print_color(f"[check] camera extr: \n {trainer.get_extr()}")
         # print_color("[check] scales.max", trainer.get_attribute("scale").max())
         # print_color("[check] scales.min", trainer.get_attribute("scale").min())
         # print_color("[check] far depth", trainer.prev_depth_abs[trainer.prev_depth_abs>0].max())
@@ -326,6 +354,7 @@ def main(
         frames_sequence.append(frames[-1])
         frames_center_sequence.append(frames_center[-1])
         frames_depth_sequence.append(frames_depth[-1])
+        frames_move_seg.append(move_seg)
         if still_rgb_np is not None:
             frames_still_sequence.append(still_rgb_np) 
             frames_still_center_sequence.append(still_center_np)
@@ -336,9 +365,10 @@ def main(
             (out_img, out_img_center, out_img_depth, 
             out_img_traj, out_img_traj_upon ) = trainer.eval(
                 traj_index=traj_index,
-                line_scale=0.2, 
+                line_scale=0.5, 
                 point_scale=2., 
-                alpha=0.8
+                alpha=0.8,
+                split_interval=split_interval,
             )
             frames_sequence_traj.append(out_img_traj)
             frames_sequence_traj_upon.append(out_img_traj_upon)
@@ -355,12 +385,16 @@ def main(
             sequence_traj_occlusion.append(trainer.move_seg)
 
 
-    
+    end_time = time.time()
+    total_time = end_time - start_time
+    # convert to minutes
+    total_time = total_time / 60
+
     # generate video
     for name, frames, fps in zip(
-        ["sequence", "sequence_center", "sequence_depth", "sequence_optimize", "sequence_center_optimize", "sequence_depth_optimize", "sequence_still", "sequence_still_center", "sequence_move", "sequence_move_center"],
-        [frames_sequence, frames_center_sequence, frames_depth_sequence, frames_sequence_optimize, frames_center_sequence_optimize, frames_depth_sequence_optimize, frames_still_sequence, frames_still_center_sequence, frames_move_sequence, frames_move_center_sequence],
-        [5, 5, 5, 30, 30, 30, 5, 5, 5, 5]):
+        ["sequence", "sequence_center", "sequence_depth", "sequence_optimize", "sequence_center_optimize", "sequence_depth_optimize", "sequence_still", "sequence_still_center", "sequence_move", "sequence_move_center", "sequence_move_seg"],
+        [frames_sequence, frames_center_sequence, frames_depth_sequence, frames_sequence_optimize, frames_center_sequence_optimize, frames_depth_sequence_optimize, frames_still_sequence, frames_still_center_sequence, frames_move_sequence, frames_move_center_sequence, frames_move_seg],
+        [5, 5, 5, 30, 30, 30, 5, 5, 5, 5, 5]):
 
         mp4_path = os.path.join(trainer.dir, f"{name}.mp4")
         save_video(mp4_path, frames, fps)
@@ -390,17 +424,20 @@ def main(
     occulasions = process_occu(sequence_traj_occlusion, tracks_traj)
     
 
-    traj_visualizer = TrajVisualizer(save_dir=trainer.dir, pad_value=0, linewidth=1, fps=5, show_first_frame=2)
+    traj_visualizer = TrajVisualizer(save_dir=trainer.dir, pad_value=0, linewidth=2, fps=5, show_first_frame=2)
     # traj_visualizer.visualize(video=frames_video_torch,tracks=tracks_traj, segm_mask=segm_mask, occulasions=occulasions, filename="sequence_traj_vis", compensate_for_camera_motion=True)
     traj_visualizer.visualize(video=frames_video_torch,tracks=tracks_traj, occulasions=occulasions, filename="sequence_traj_vis", still_length=cloest_points_still.shape[0])
     if grad_traj:
-        traj_visualizer = TrajVisualizer(save_dir=trainer.dir, pad_value=0, linewidth=1, fps=5, show_first_frame=2)
+        traj_visualizer = TrajVisualizer(save_dir=trainer.dir, pad_value=0, linewidth=2, fps=5, show_first_frame=2)
         # traj_visualizer.visualize(video=frames_video_torch,tracks=tracks_traj, segm_mask=segm_mask, occulasions=occulasions, filename="sequence_traj_vis", compensate_for_camera_motion=True)
         traj_visualizer.visualize(video=frames_video_torch,tracks=tracks_traj[:,:,:cloest_points_still.shape[0],:], occulasions=occulasions, filename="sequence_traj_vis_still")
-        traj_visualizer = TrajVisualizer(save_dir=trainer.dir, pad_value=0, linewidth=1, fps=5, show_first_frame=2)
+        traj_visualizer = TrajVisualizer(save_dir=trainer.dir, pad_value=0, linewidth=2, fps=5, show_first_frame=2)
         # traj_visualizer.visualize(video=frames_video_torch,tracks=tracks_traj, segm_mask=segm_mask, occulasions=occulasions, filename="sequence_traj_vis", compensate_for_camera_motion=True)
         traj_visualizer.visualize(video=frames_video_torch,tracks=tracks_traj[:,:,-len(cloest_points_move):,:], occulasions=occulasions, filename="sequence_traj_vis_move")
 
+    print_color(f"Total time: {total_time} mins", color="green")
+    print_color(f"Total time: {total_time} mins", color="green")
+    print_color(f"Total time: {total_time} mins", color="green")
 
     
 def save_video(mp4_path, frames, fps):

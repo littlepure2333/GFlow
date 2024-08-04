@@ -9,13 +9,40 @@ import matplotlib
 import numpy as np
 import cv2
 from scipy.spatial import ConvexHull
-from alphashape import alphashape
+# from alphashape import alphashape
 from skimage import draw
-from descartes import PolygonPatch
 from matplotlib import pyplot as plt
 import concavity
 from concavity.utils import *
 from concave_hull import concave_hull
+import imageio
+from matplotlib import cm
+
+def signed_expm1(x):
+    sign = torch.sign(x)
+    return sign * torch.expm1(torch.abs(x))
+
+def signed_log1p(x):
+    sign = torch.sign(x)
+    return sign * torch.log1p(torch.abs(x))
+
+def print_color(msg, color="green"):
+    if color == "red":
+        print("\033[91m {}\033[00m".format(msg))
+    elif color == "green":
+        print("\033[92m {}\033[00m".format(msg))
+    elif color == "yellow":
+        print("\033[93m {}\033[00m".format(msg))
+    elif color == "blue":
+        print("\033[94m {}\033[00m".format(msg))
+    elif color == "purple":
+        print("\033[95m {}\033[00m".format(msg))
+    elif color == "cyan":
+        print("\033[96m {}\033[00m".format(msg))
+    elif color == "white":
+        print("\033[97m {}\033[00m".format(msg))
+    else:
+        print(msg)
 
 def image_path_to_tensor(image_path, resize: int = None, blur: bool = False, blur_sigma: float = 5.0, blur_kernel_size: int = 7):
     img = Image.open(image_path) # the range is [0,1] by Image.open
@@ -33,9 +60,31 @@ def image_path_to_tensor(image_path, resize: int = None, blur: bool = False, blu
 
     return img_tensor
 
+def read_mask(mask_path, resize=None):
+    print(mask_path)
+    mask = imageio.imread(mask_path)
+    mask_tensor = torch.tensor(mask, dtype=torch.float32)
+    print(mask_tensor.shape)
+    print(mask_tensor.min(), mask_tensor.max())
+    # resize the mask
+    if resize is not None:
+        transform = transforms.Resize(resize, antialias=True)
+        mask_tensor = transform(mask_tensor)
+    # convert to bool type
+    mask_tensor = mask_tensor > 0
+    # save the mask as a binary image
+    mask_np = mask_tensor.numpy() * 255
+    mask_np = mask_np.astype(np.uint8)
+    imageio.imwrite("/home/wangshizun/projects/msplat/mask.png", mask_np)
+
+    return mask_tensor
+
+
 def read_depth(depth_path, resize=None, depth_scale=1.0, depth_offset=0.):
     depth = np.load(depth_path)
     depth_tensor = torch.tensor(depth, dtype=torch.float32)
+    # print(depth_tensor.shape)
+    depth_tensor = depth_tensor.unsqueeze(0)
     # resize the depth
     if resize is not None:
         transform = transforms.Resize(resize, antialias=True)
@@ -43,6 +92,7 @@ def read_depth(depth_path, resize=None, depth_scale=1.0, depth_offset=0.):
     # print("depth_tensor.shape", depth_tensor.shape)
     # print("depth_tensor.min()", depth_tensor.min())
     # print("depth_tensor.max()", depth_tensor.max())
+    depth_tensor = depth_tensor.squeeze(0)
     return depth_tensor * depth_scale + depth_offset
 
 def read_camera(camera_paths):
@@ -154,7 +204,8 @@ def camera2world(uvd, intr, extr):
 #     return world_coord
 
 
-def apply_float_colormap(image, colormap: Literal["turbo", "grey"] = "turbo", non_zero: bool = False):
+def apply_float_colormap(image, colormap: Literal["turbo", "grey", "gist_rainbow"] = "turbo", non_zero: bool = False):
+    # [ ] TODO replace to a simper one: https://github.com/NVlabs/CF-3DGS/blob/79f938596c1a32d54929c718a06450142323816d/trainer/trainer.py#L173
     # colormap = "turbo"
     # image = image[..., None]
     if non_zero:
@@ -177,9 +228,13 @@ def apply_float_colormap(image, colormap: Literal["turbo", "grey"] = "turbo", no
     assert image_long_min >= 0, f"the min value is {image_long_min}"
     assert image_long_max <= 255, f"the max value is {image_long_max}"
 
-    return torch.tensor(matplotlib.colormaps[colormap].colors, device=image.device)[
-        image_long[..., 0]
-    ]
+    result_np = cm.get_cmap(colormap)(image_long[..., 0].cpu().numpy())[:, :3]
+    result_tensor = torch.tensor(result_np, device=image.device).float()
+
+    return result_tensor
+    # return torch.tensor(matplotlib.colormaps[colormap].colors, device=image.device)[
+    #     image_long[..., 0]
+    # ]
 
 def gen_line_set(xyz1, xyz2, rgb, device):
     # xyz1 = torch.randn((N, 3))
@@ -232,18 +287,31 @@ def save_splat_file(splat_data, output_path):
 def extract_camera_parameters(intrinsic_matrix, extrinsic_matrix, W, H, img_name="00001"):
     # Extract focal lengths and principal point from the intrinsic matrix
     [fx, fy, cx, cy] = intrinsic_matrix.detach().cpu().numpy().tolist()
-
+    '''
     # Extract rotation matrix and translation vector from the extrinsic matrix
-    R = extrinsic_matrix[:3, :3]
-    t = extrinsic_matrix[:3, 3]
-    # R = np.linalg.inv(R.detach().cpu().numpy())
+    extr = extrinsic_matrix.T.detach().cpu().numpy()
+    extrinsic_matrix_inv = np.linalg.pinv(extr)
+    # print(extr)
+    # print(extrinsic_matrix_inv)
+    R = extrinsic_matrix_inv[:, :3]
+    R = np.linalg.inv(R)
 
     # print(R)
-    # t = extrinsic_matrix[:, 3]
+    t = extrinsic_matrix_inv[:, 3]
 
     # Calculate camera position in world coordinates
-    # camera_position = R.dot(t.detach().cpu().numpy())
+    camera_position = R.dot(t)
+    '''
+
+    R = extrinsic_matrix[:3, :3]  # 旋转矩阵部分
+    t = extrinsic_matrix[:3, 3]   # 平移向量部分
+
+    # 计算相机在世界坐标系中的位置
+    # 通过求逆矩阵的方法，位置为 -R.T @ t
     camera_position = -R.T @ t
+
+    # 计算相机在世界坐标系中的旋转
+    # 旋转矩阵在世界坐标系中为 R.T
     camera_rotation = R.T
 
     # Return all extracted parameters
@@ -258,26 +326,11 @@ def extract_camera_parameters(intrinsic_matrix, extrinsic_matrix, W, H, img_name
         "fy": fy
     }]
 
-def extract_camera_extr_from_viewmat(viewmat):
-    # Viewmat Size: (4,4)
-    # Extract rotation matrix and translation vector from the extrinsic matrix
-    R = viewmat[:3, :3]
-    t = viewmat[:3, 3]
-    R = R.T
-    t = -R @ t
-    extr = np.zeros((3, 4))
-    extr[:3, :3] = R
-    extr[:3, 3] = t
-    return extr
-
-
 def construct_list_of_attributes():
     l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
     # All channels except the 3 DC
     for i in range(3):
         l.append('f_dc_{}'.format(i))
-    # for i in range(3):
-        # l.append('f_rest_{}'.format(i))
     l.append('opacity')
     for i in range(3):
         l.append('scale_{}'.format(i))
@@ -328,9 +381,20 @@ class ConcaveHull2D:
 
         return mask
 
+def filter_sparse_mask(points_tensor, eps=1.5, min_samples=10):
+    points_np = points_tensor.detach().cpu().numpy()
+    # using sklearn DBSCAN to filter the sparse points
+    from sklearn.cluster import DBSCAN
+    clustering = DBSCAN(eps=eps, min_samples=min_samples).fit(points_np)
+    sparse_mask_np = clustering.labels_ == -1
+    # convert to tensor, bool type
+    sparse_mask_tensor = torch.tensor(sparse_mask_np, device=points_tensor.device)
+
+    return sparse_mask_tensor
+
 
 class FastConcaveHull2D:
-    def __init__(self, points, sigma=0., num_points_factor=2):
+    def __init__(self, points, sigma=2, num_points_factor=5):
         self.points = points
 
         # judge if the points are in numpy format, if not, convert them to numpy

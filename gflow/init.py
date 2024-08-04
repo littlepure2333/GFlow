@@ -161,6 +161,7 @@ def image_sampling(gt_image, gt_depth, num_points=5000, device='cpu', mask=None)
     return xys, depths_norm, scales_norm, rgbs_norm, gt_depth
 
 def complex_texture_sampling(gt_image, gt_depth, num_points=5000, device='cpu', mask=None):
+    # [ ] TODO clean up this method
     # gt_image: (H, W, 3) range: [0, 1]
     # gt_depth: (H, W), range: [0, 1]
     # read the image

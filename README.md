@@ -1,14 +1,22 @@
 # GFlow
 
 ## Prepare
-1. Install Msplat following original instructions.
-2. Make sure you have "./images" which contains some image sequences extract from the videos. (You can soft link my dir: `/home/wangshizun/data/images/`)
+1. run `git clone --recursive https://github.com/littlepure2333/GFlow.git` because this project relies on some submodules.
+2. Install Msplat, dust3r(especially compiling the cuda kernels for RoPE, for faster inference speed) following original instructions.
+3. Make sure you have "./images" which contains some image sequences extract from the videos. (You can soft link my dir: `/home/wangshizun/data/images/`)
+
+## Prepare
+* `bash scripts/depth.sh` to extract depth from images
+* `bash scripts/flow.sh` to extract optical flow from images
 
 ## Run
 * `bash scripts/fit_2d.sh` A simple test for reconstruct image and optimize camera.
 * `bash scripts/fit_image.sh` Fit an image using texture init.
 * `bash scripts/fit_video.sh` Fit a video. Working in process.
+
+## View
 * `bash scripts/match.sh` Generate gaussian points tracking after fitting a video.
+* `bash scripts/run_viewer.sh` Run a web viewer to view the frames
 
 
 

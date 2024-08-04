@@ -229,7 +229,6 @@ class TrajVisualizer:
                         color = self.color_map(move_norm(tracks[query_frame, n, 1]))
                         color = np.array(color[:3])[None] * 255
                         vector_colors[:, n] = np.repeat(color, T, axis=0)
-                        
             else:
                 # color changes with time
                 for t in range(T):
