@@ -9,3 +9,7 @@
 [submodule "third_party/unimatch"]
 	path = third_party/unimatch
 	url = https://github.com/autonomousvision/unimatch.git
+
+[submodule "third_party/flowsam"]
+	path = third_party/flowsam
+	url = https://github.com/Jyxarthur/flowsam.git
