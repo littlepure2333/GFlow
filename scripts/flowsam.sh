@@ -1,7 +1,8 @@
-cd third_party/flowsam
-
-img_dir="../../data/car-turn/car-turn"
+# img_dir="../../data/car-turn/car-turn"
+img_dir=$1
 save_path=$img_dir"_flowsam"
+
+cd third_party/flowsam
 
 python evaluation.py --model=flowpsam --flow_gaps=1,-1,2,-2 \
                       --max_obj=1 --num_gridside=20 \

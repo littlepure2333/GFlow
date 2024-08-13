@@ -1,6 +1,7 @@
 gpu_id=1
-inference_dir="/home/wangshizun/projects/gflow/data/car-turn/car-turn"
-output_path=$inference_dir"_flow"
+# inference_dir="/home/wangshizun/projects/gflow/data/car-turn/car-turn"
+inference_dir=$1
+output_path=$inference_dir"_flow_refine"
 
 cd third_party/unimatch
 
