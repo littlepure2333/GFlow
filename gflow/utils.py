@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import torch
 import torchsnooper
 from PIL import Image
@@ -17,6 +18,8 @@ from concavity.utils import *
 from concave_hull import concave_hull
 import imageio
 from matplotlib import cm
+from tqdm import tqdm
+import pointops
 
 def signed_expm1(x):
     sign = torch.sign(x)
@@ -60,22 +63,32 @@ def image_path_to_tensor(image_path, resize: int = None, blur: bool = False, blu
 
     return img_tensor
 
-def read_mask(mask_path, resize=None):
-    print(mask_path)
+def read_mask(mask_path, resize=None, device="cpu"):
+    # print(resize)
+    # print(mask_path)
     mask = imageio.imread(mask_path)
-    mask_tensor = torch.tensor(mask, dtype=torch.float32)
-    print(mask_tensor.shape)
-    print(mask_tensor.min(), mask_tensor.max())
+    if mask.ndim == 3:
+        mask_tensor = torch.tensor(mask, dtype=torch.float32).permute(2, 0, 1)
+    elif mask.ndim == 2:
+        mask_tensor = torch.tensor(mask, dtype=torch.float32).unsqueeze(0)
+    else:
+        raise ValueError("The mask should be 2D or 3D")
+    # print(mask_tensor.shape)
+    # print(mask_tensor.min(), mask_tensor.max())
     # resize the mask
     if resize is not None:
         transform = transforms.Resize(resize, antialias=True)
         mask_tensor = transform(mask_tensor)
+    # if mask_tensor has rgb channels, turn it to binary
+    if mask_tensor.shape[-1] > 1:
+        mask_tensor = mask_tensor.sum(dim=0)
+    mask_tensor = mask_tensor.squeeze()
     # convert to bool type
     mask_tensor = mask_tensor > 0
     # save the mask as a binary image
-    mask_np = mask_tensor.numpy() * 255
-    mask_np = mask_np.astype(np.uint8)
-    imageio.imwrite("/home/wangshizun/projects/msplat/mask.png", mask_np)
+    # mask_np = mask_tensor.numpy() * 255
+    # mask_np = mask_np.astype(np.uint8)
+    # imageio.imwrite("/home/wangshizun/projects/msplat/mask.png", mask_np)
 
     return mask_tensor
 
@@ -83,13 +96,13 @@ def read_mask(mask_path, resize=None):
 def read_depth(depth_path, resize=None, depth_scale=1.0, depth_offset=0.):
     depth = np.load(depth_path)
     depth_tensor = torch.tensor(depth, dtype=torch.float32)
-    # print(depth_tensor.shape)
+    # print("depth_tensor.shape", depth_tensor.shape)
     depth_tensor = depth_tensor.unsqueeze(0)
     # resize the depth
     if resize is not None:
         transform = transforms.Resize(resize, antialias=True)
         depth_tensor = transform(depth_tensor)
-    # print("depth_tensor.shape", depth_tensor.shape)
+    # print("depth_tensor.shape after", depth_tensor.shape)
     # print("depth_tensor.min()", depth_tensor.min())
     # print("depth_tensor.max()", depth_tensor.max())
     depth_tensor = depth_tensor.squeeze(0)
@@ -512,3 +525,29 @@ def process_occu(sequence_traj_occlusion, tracks):
 def find_closest_point(uv, coords):
     dists = np.sum((uv[:, None] - coords[None]) ** 2, axis=-1)
     return np.argmin(dists, axis=0)
+
+# def farthest_point_sampling(xyz, fps_number, device):
+#     # farthest point sampling
+#     N = xyz.shape[0]
+#     fps_idx = [0]
+#     for i in tqdm(range(1, fps_number)):
+#         dists = torch.sum((xyz - xyz[fps_idx[-1]]) ** 2, dim=1)
+#         idx = torch.argmax(dists)
+#         fps_idx.append(idx)
+#     return fps_idx
+
+
+def farthest_point_sampling(xyz, fps_number, device):
+    num_pts = xyz.shape[0]
+    print(num_pts)
+    start = time.time()
+    batch_size = 1
+    offset = torch.cumsum(torch.Tensor([num_pts] * batch_size).to(device), dim=0).to(torch.long)
+    new_offset = torch.cumsum(torch.Tensor([fps_number] * batch_size).to(device), dim=0).to(torch.long)
+
+    result = pointops.farthest_point_sampling(xyz, offset, new_offset)
+    print(result.shape)
+    end = time.time()
+    print("FPS time:", end-start)
+
+    return result

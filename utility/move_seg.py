@@ -17,7 +17,7 @@ import torchvision
 import torchvision.transforms as transforms
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-from sam2_utils import sam2_propagate_mask, sam2_image_seg, sam2_video_seg
+# from sam2_utils import sam2_propagate_mask, sam2_image_seg, sam2_video_seg
 
 DEVICE = "cuda"
 DEVICE = "cpu"
@@ -165,16 +165,16 @@ if __name__ == "__main__":
     parser.add_argument("--threshold", type=float, default=0.15, help="epipolar error threshold for motion mask")
     args = parser.parse_args()
     img_dir = args.img_dir
-    flow_dir = img_dir + "_flow"
+    flow_dir = img_dir + "_flow_refine"
     epipolar_dir = img_dir + "_epipolar"
     move_mask_dir = img_dir + "_move_mask"
 
-    image_paths = sorted(glob.glob(os.path.join(img_dir, "*.jpg")))
+    image_paths = sorted(glob.glob(os.path.join(img_dir, "*.jpg"))) + sorted(glob.glob(os.path.join(img_dir, "*.png")))
     fwd_flow_paths = sorted(glob.glob(os.path.join(flow_dir, "*_pred.flo")))
     bwd_flow_paths = sorted(glob.glob(os.path.join(flow_dir, "*_pred_bwd.flo")))
 
-    assert len(image_paths) == len(fwd_flow_paths) + 1
-    assert len(fwd_flow_paths) == len(bwd_flow_paths)
+    assert len(image_paths) == len(fwd_flow_paths) + 1, f"len(image_paths): {len(image_paths)}, len(fwd_flow_paths): {len(fwd_flow_paths)}"
+    assert len(fwd_flow_paths) == len(bwd_flow_paths), f"len(fwd_flow_paths): {len(fwd_flow_paths)}, len(bwd_flow_paths): {len(bwd_flow_paths)}"
 
     img = load_image(image_paths[0])
     H = img.shape[2]
@@ -269,9 +269,9 @@ if __name__ == "__main__":
     
 
     # RUN SEMANTIC SEGMENTATION
-    epipolar_paths = sorted(glob.glob(os.path.join(epipolar_dir, "*_erode.png")))
-    sam2_image_seg(image_paths=[image_paths[0]], epipolar_paths=[epipolar_paths[0]], output_mask_dir=move_mask_dir)
-    sam2_propagate_mask(img_dir, move_mask_dir, move_mask_dir, use_all_masks=False, file_suffix=".png")
+    # epipolar_paths = sorted(glob.glob(os.path.join(epipolar_dir, "*_erode.png")))
+    # sam2_image_seg(image_paths=[image_paths[0]], epipolar_paths=[epipolar_paths[0]], output_mask_dir=move_mask_dir)
+    # sam2_propagate_mask(img_dir, move_mask_dir, move_mask_dir, use_all_masks=False, file_suffix=".png")
     # sam2_video_seg(img_dir, epipolar_paths, move_mask_dir)
 
     # save video

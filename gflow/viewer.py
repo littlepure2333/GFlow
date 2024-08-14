@@ -28,12 +28,22 @@ import json
 import roma
 from geometry import inv
 
+def _isotropic(x):
+    return (torch.abs(x) + 1e-8).repeat(1, 3)
+
+def sensitive_sigmoid(x, scale=10.):
+    return torch.sigmoid(x * scale)
+
+def sensitive_logit(x, scale=10.):
+    return torch.logit(x) / scale
+
 activations = {
+    "scale": lambda x: torch.abs(x),
     # "scale": lambda x: torch.abs(x) + 1e-8,
-    "scale": lambda x: torch.clamp_max(torch.abs(x) + 1e-8, 1.),
     # "scale": _isotropic,
     "rotate": torch.nn.functional.normalize,
-    "opacity": torch.sigmoid,
+    # "opacity": torch.sigmoid,
+    "opacity": sensitive_sigmoid,
     "rgb": torch.sigmoid
 }
 
@@ -170,6 +180,10 @@ def main(args):
     def _(client: viser.ClientHandle) -> None:
         client.camera.position = (0., 0., 0.)
         client.camera.wxyz = (1., 0., 0., 0.)
+        # extr = original_extr[current_frame.value] # world2cam
+        # q, pos = extr_to_quan_pos(extr)
+        # client.camera.wxyz = (q[3], q[0], q[1], q[2])
+        # client.camera.position = (pos[0], pos[1], pos[2])
 
         @back_button.on_click
         def _(_) -> None:

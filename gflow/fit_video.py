@@ -40,6 +40,7 @@ def main(
     lambda_rgb: float = 1.,
     lambda_depth: float = 0.,
     lambda_still: float = 0.,
+    lambda_scale: float = 0.,
     lambda_delta: float = 0.,
     lambda_mov: float = 0.,
     lambda_rig: float = 0.,
@@ -73,6 +74,8 @@ def main(
     traj_offset: int = 0,
     eps: float = 10, 
     min_samples: float = 20,
+    logs_suffix: str = "_logs",
+    load_extr: bool = True,
 ) -> None:
     
     frames_sequence_optimize = []
@@ -96,21 +99,37 @@ def main(
     img_paths = sorted(Path(sequence_path).glob("*.png")) + sorted(Path(sequence_path).glob("*.jpg"))
     if frame_range == -1:
         frame_range = len(img_paths)-1
-    img_depth_paths = sorted(Path(str(sequence_path)+'_depth_dust3r').glob("*.npy"))
+    # img_depth_paths = sorted(Path(str(sequence_path)+'_depth_mast3r').glob("*.npy"))
+    img_depth_paths = sorted(Path(str(sequence_path)+'_depth_mast3r_s2').glob("*.npy"))
     # img_depth_paths = sorted(Path(str(sequence_path)+'_depth_ZoeDepth').glob("*.npy"))
     # img_depth_paths = sorted(Path(str(sequence_path)+'_depth').glob("*.png")) + sorted(Path(str(sequence_path)+'_depth').glob("*.jpg"))
     img_paths = img_paths[frame_start:frame_start+frame_range][::skip_interval]
     img_depth_paths = img_depth_paths[frame_start:frame_start+frame_range][::skip_interval]
-    img_occ_paths = sorted(Path(str(sequence_path)+'_flow').glob("*occ_bwd.png")) + sorted(Path(str(sequence_path)+'_flow').glob("*occ_bwd.jpg"))
+    # img_occ_paths = sorted(Path(str(sequence_path)+'_flow').glob("*occ_bwd.png")) + sorted(Path(str(sequence_path)+'_flow').glob("*occ_bwd.jpg"))
+    img_occ_paths = sorted(Path(str(sequence_path)+'_flow_refine').glob("*occ_bwd.png")) + sorted(Path(str(sequence_path)+'_flow_refine').glob("*occ_bwd.jpg"))
     img_occ_paths = img_occ_paths[frame_start:frame_start+frame_range-1][::skip_interval]
-    flow_paths = sorted(Path(str(sequence_path)+'_flow').glob("*pred.flo"))
+    # flow_paths = sorted(Path(str(sequence_path)+'_flow').glob("*pred.flo"))
+    flow_paths = sorted(Path(str(sequence_path)+'_flow_refine').glob("*pred.flo"))
     flow_paths = flow_paths[frame_start:frame_start+frame_range][::skip_interval]
     mask_paths = sorted(Path(str(sequence_path)+'_mask').glob("*.png"))
     mask_paths = mask_paths[frame_start:frame_start+frame_range][::skip_interval]
     mask_exist = len(mask_paths) > 0
-    camera_paths = sorted(Path(str(sequence_path)+'_camera_dust3r').glob("*.json"))
+
+    # move_mask_paths = sorted(Path(str(sequence_path)+'_move_mask').glob("*.png"))
+    # move_mask_paths = move_mask_paths[frame_start:frame_start+frame_range][::skip_interval]
+
+    move_mask_paths = sorted(Path(str(sequence_path)+'_epipolar').glob("*_open.png"))
+    move_mask_paths = move_mask_paths[frame_start:frame_start+frame_range][::skip_interval]
+    # camera_paths = sorted(Path(str(sequence_path)+'_camera_mast3r').glob("*.json"))
+    camera_paths = sorted(Path(str(sequence_path)+'_camera_mast3r_s2').glob("*.json"))
     camera_paths = camera_paths[frame_start:frame_start+frame_range][::skip_interval]
+    
+    # read camera
     focal, pp, extr_list = read_camera(camera_paths)
+
+    # read move masks
+    move_masks = [read_mask(move_mask_path, resize=resize) for move_mask_path in move_mask_paths]
+    
     
     start_time = time.time()
     # gt_images = [image_path_to_tensor(img_path, resize=resize, blur=blur) for img_path in img_paths]
@@ -123,16 +142,19 @@ def main(
     H, W = gt_image0.shape[-2:]
     # depth_scale = float(focal) / float(H)
     # [ ] TODO decide the scale by distance 
-    depth_scale = float(focal) / 20.
+    # depth_scale = float(focal) / 20.
+    depth_scale = 1.
     # depth_offset = 10.
     # depth_scale = float(focal)
     # gt_depth0 = image_path_to_tensor(img_depth_paths[0], resize=resize, blur=blur)
     gt_depth0 = read_depth(img_depth_paths[0], resize=resize, depth_scale=depth_scale, depth_offset=depth_offset).unsqueeze(-1)
     gt_flow0 = readFlow(flow_paths[0], resize=resize, blur=blur)
+    # [ ] TODO do not need to load flow at the first frame
     trainer = SimpleGaussian(gt_image=gt_image0, gt_depth=gt_depth0, gt_flow=gt_flow0,
-                             num_points=num_points, background=background, sequence_path=sequence_path)
-    trainer.load_camera(focal, pp)
-    # trainer.load_camera(focal, pp, extr_list[0])
+                             num_points=num_points, background=background, sequence_path=sequence_path, logs_suffix=logs_suffix)
+    trainer.load_camera(focal=focal, pp=pp)
+    if load_extr:
+        trainer.load_camera(extr=extr_list[0])
     trainer.init_gaussians_from_image(gt_image=gt_image0, gt_depth=gt_depth0, num_points=num_points)
     frames, frames_center, frames_depth, still_rgb_np, still_center_np, move_rgb_np, move_center_np, move_seg = trainer.train(
         iterations=iterations_first,
@@ -147,11 +169,13 @@ def main(
         lambda_rgb=lambda_rgb,
         lambda_depth=lambda_depth,
         lambda_var=lambda_var,
+        lambda_scale=lambda_scale,
         densify_times=densify_times,
         densify_interval=densify_interval,
         grad_threshold=grad_threshold,
         eps=eps,
         min_samples=min_samples,
+        move_mask=move_masks[0].to(trainer.device),
     )
     frames_sequence_optimize += frames
     frames_center_sequence_optimize += frames_center
@@ -162,7 +186,7 @@ def main(
     frames_move_seg.append(move_seg)
     if still_rgb_np is not None:
         frames_still_sequence.append(still_rgb_np)
-        frames_still_center_sequence.append(still_center_np)
+        frames_still_center_sequence.append(still_center_np) 
         frames_move_sequence.append(move_rgb_np)
         frames_move_center_sequence.append(move_center_np)
     if mask_exist:
@@ -267,6 +291,9 @@ def main(
         trainer.set_gt_depth(gt_depth)
         trainer.set_gt_flow(gt_flow)
 
+        if load_extr:
+            trainer.load_camera(extr=extr_list[i+1])
+
         if camera_first:
             print_color(f"[{i+1}/{len(img_paths) - 1}] fitting camera-only first.................")
             frames, frames_center, frames_depth, still_rgb_np, still_center_np, move_rgb_np, move_center_np, move_seg = trainer.train(
@@ -283,13 +310,15 @@ def main(
                 lambda_rgb=lambda_rgb,
                 lambda_depth=lambda_depth,
                 # lambda_depth=0.,
-                lambda_var=lambda_var,
+                # lambda_var=lambda_var,
+                lambda_var=0.,
                 lambda_still=0.,
                 lambda_flow=lambda_flow,
                 densify_times=densify_times,
                 densify_interval=densify_interval,
                 grad_threshold=grad_threshold,
                 camera_only=True,
+                move_mask=move_masks[i+1].to(trainer.device),
             )
             frames_sequence_optimize += frames
             frames_center_sequence_optimize += frames_center
@@ -322,6 +351,7 @@ def main(
                 lambda_depth=lambda_depth,
                 lambda_var=lambda_var,
                 lambda_still=lambda_still,
+                lambda_scale=lambda_scale,
                 # lambda_flow=0.,
                 lambda_flow=lambda_flow,
                 densify_times=densify_times_after,
@@ -332,6 +362,7 @@ def main(
                 mask=occ_mask,
                 eps=eps,
                 min_samples=min_samples,
+                move_mask=move_masks[i+1].to(trainer.device),
                 # mask=occ_mask.permute(1, 2, 0),
                 # slow_color=slow_color,
                 # slow_means=slow_means,
