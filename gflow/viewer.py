@@ -6,30 +6,18 @@ python gflow/viewer.py --gpu 0 --port 8082 --folder "logs/2024_08_03-21_37_27"
 """
 
 import argparse
-import math
 import os
 import time
-from typing import Tuple
 
-import imageio
-# import nerfview
-import numpy as np
 import torch
-import torch.nn.functional as F
 from tqdm import tqdm
 import viser
-import sys
 import os
-import tyro
 
-import render
+import utils.render as render
 import time
-import json
 import roma
-from geometry import inv
-
-def _isotropic(x):
-    return (torch.abs(x) + 1e-8).repeat(1, 3)
+from utils.geometry import inv
 
 def sensitive_sigmoid(x, scale=10.):
     return torch.sigmoid(x * scale)
@@ -102,7 +90,8 @@ def main(args):
 
     ckpt_files, width, height = log_loader(args.folder)
 
-    bg = 0. # background color
+    # bg = 0. # background color (black)
+    bg = 1. # background color (white)
 
     # load checkpoints
     input_group_list = []
@@ -254,5 +243,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    # cli(main, args, verbose=True)
     main(args)

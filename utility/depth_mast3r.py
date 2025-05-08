@@ -1,5 +1,3 @@
-import path_to_mast3r
-
 import os
 import copy
 import imageio
@@ -12,11 +10,16 @@ import matplotlib
 from scipy.spatial.transform import Rotation
 from tqdm import tqdm
 
+import sys
+# Append third_party/mast3r and third_party/mast3r/dust3r into the system path
+sys.path.append("./third_party/mast3r")
+sys.path.append("./third_party/mast3r/dust3r")
+
+
 from mast3r.model import AsymmetricMASt3R
 from mast3r.fast_nn import fast_reciprocal_NNs
 from mast3r.cloud_opt.sparse_ga import sparse_global_alignment, make_dense_pts3d
 
-import mast3r.utils.path_to_dust3r  # noqa
 from dust3r.image_pairs import make_pairs
 from dust3r.inference import inference
 from dust3r.utils.image import load_images
@@ -34,20 +37,15 @@ def main(parent_dir: str = None,
     niter2 = 200
     optim_level = "refine"
     winsize = 3
-    # cache_dir = "/local_home/wangshizun/cache/"
-    cache_dir = "/home/wangshizun/cache/"
+    cache_dir = "./cache/"
     win_cyclic = False
     refid = 0
     matching_conf_thr = 5.
     shared_intrinsics = True
     # [ ] TODO fix principal points
-
-    # model_name = "naver/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric"
-    model_name = "/home/wangshizun/projects/mast3r/weights/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth"
+    model_name = "./third_party/mast3r/weights/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth"
     # you can put the path to a local checkpoint in model_name if needed
     model = AsymmetricMASt3R.from_pretrained(model_name).to(device)
-
-    # input_dir = "/home/wangshizun/projects/msplat/data_share/DAVIS/images/car-turn-test/car-turn"
 
     # list all folders in the parent_dir
     folder_names = [f for f in os.listdir(parent_dir) if os.path.isdir(os.path.join(parent_dir, f))]
@@ -55,10 +53,10 @@ def main(parent_dir: str = None,
     # flag = False
 
     for folder_name in folder_names:
-        # if "india" in folder_name: flag = True
+        # if "cows" in folder_name: flag = True # Why?
         # if not flag: continue
-        if "car-turn-test" in folder_name: continue
-        if "car-turn-1080" in folder_name: continue
+        # if folder_name in ["alley_1", "alley_2", "ambush_2", "ambush_4", "ambush_5", "ambush_6", "ambush_7", "bamboo_1", "bamboo_2", "bandage_1", "bandage_2", "cave_2", "sleeping_1", "sleeping_2", "temple_3"]:
+        #     continue
         input_dir = os.path.join(parent_dir, folder_name, folder_name)
         print(f'>> processing {input_dir}')
 
@@ -76,7 +74,8 @@ def main(parent_dir: str = None,
 
 def inference_mast3r(model, device, images_list, input_dir, cache_dir,
                      optim_level, lr1, niter1, lr2, niter2, matching_conf_thr,
-                     scenegraph_type, winsize, win_cyclic, refid, shared_intrinsics, **kw):
+                     scenegraph_type, winsize, win_cyclic, refid, 
+                     shared_intrinsics, subsample=2, **kw):
     """
     from a list of images, run mast3r inference, sparse global aligner.
     then run get_3D_model_from_scene
@@ -98,6 +97,7 @@ def inference_mast3r(model, device, images_list, input_dir, cache_dir,
     if scenegraph_type in ["swin", "logwin"] and not win_cyclic:
         scene_graph_params.append('noncyclic')
     scene_graph = '-'.join(scene_graph_params)
+    print(len(imgs))
     pairs = make_pairs(imgs, scene_graph=scene_graph, prefilter=None, symmetrize=True)
     print(f'>> {len(pairs)} pairs of images to process')
     if optim_level == 'coarse':
@@ -107,7 +107,7 @@ def inference_mast3r(model, device, images_list, input_dir, cache_dir,
     scene = sparse_global_alignment(images_list, pairs, cache_dir,
                                     model, lr1=lr1, niter1=niter1, lr2=lr2, niter2=niter2, device=device,
                                     opt_depth='depth' in optim_level, shared_intrinsics=shared_intrinsics,
-                                    matching_conf_thr=matching_conf_thr, **kw)
+                                    matching_conf_thr=matching_conf_thr, subsample=subsample, **kw)
 
 
     # retrieve useful values from scene:
@@ -116,7 +116,7 @@ def inference_mast3r(model, device, images_list, input_dir, cache_dir,
     pps = scene.get_principal_points()
     poses = scene.get_im_poses() # cam2world
 
-    pts3d, depthmaps, confs = scene.get_dense_pts3d(clean_depth=True)
+    pts3d, depthmaps, confs = scene.get_dense_pts3d(clean_depth=True, subsample=subsample)
 
     new_size = imgs[0].shape[:2]
     new_to_orig_scale = (orig_size[0] + orig_size[1]) / (new_size[0] + new_size[1])

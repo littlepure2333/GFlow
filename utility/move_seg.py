@@ -8,7 +8,6 @@ import glob
 import os
 
 import cv2
-import imageio
 import numpy as np
 import skimage.morphology
 import torch
@@ -16,11 +15,9 @@ from PIL import Image
 import torchvision
 import torchvision.transforms as transforms
 from tqdm import tqdm
-import matplotlib.pyplot as plt
-# from sam2_utils import sam2_propagate_mask, sam2_image_seg, sam2_video_seg
 
-DEVICE = "cuda"
-DEVICE = "cpu"
+
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def create_dir(dir):
@@ -126,7 +123,7 @@ def run_maskrcnn(model, img_dir):
     npyMask = ((npyMask < 1e-3) * 255.0).clip(0.0, 255.0).astype(np.uint8)
     return npyMask
 
-def readFlow(fn, resize: int = None, blur: bool = False, blur_sigma: float = 5.0, blur_kernel_size: int = 7):
+def readFlow(fn, resize: int = None, blur: bool = False, blur_sigma: float = 5.0, blur_kernel_size: int = 7, device=None):
     """ Read .flo file in Middlebury format"""
     # Code adapted from:
     # http://stackoverflow.com/questions/28013200/reading-middlebury-flow-files-with-python-bytes-array-numpy
@@ -155,17 +152,20 @@ def readFlow(fn, resize: int = None, blur: bool = False, blur_sigma: float = 5.0
                 trans_list.append(transforms.GaussianBlur(blur_kernel_size, blur_sigma))
             transform = transforms.Compose(trans_list)
             flow_tensor = transform(flow).permute(1, 2, 0) # (C, H, W) -> (H, W, C)
-
+            if device is None:
+                device = torch.device("cpu")
+            flow_tensor = flow_tensor.to(device)
             return flow_tensor
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--img_dir", type=str, help="images folder path")
-    parser.add_argument("--threshold", type=float, default=0.15, help="epipolar error threshold for motion mask")
+    parser.add_argument("--threshold", type=float, default=0.01, help="epipolar error threshold for motion mask")
     args = parser.parse_args()
     img_dir = args.img_dir
-    flow_dir = img_dir + "_flow_refine"
+    # flow_dir = img_dir + "_flow_refine"
+    flow_dir = img_dir + "_flow_unimatch"
     epipolar_dir = img_dir + "_epipolar"
     move_mask_dir = img_dir + "_move_mask"
 
@@ -185,34 +185,28 @@ if __name__ == "__main__":
     uv = get_uv_grid(H, W, align_corners=False)
     x1 = uv.reshape(-1, 2)
     frames_epipolar_error = []
-    frames_mask = []
+    frames_mask = []    
     for idx, (fwd_flow_path, bwd_flow_path) in tqdm(enumerate(zip(fwd_flow_paths, bwd_flow_paths))):
         # if idx > 10:
         #     break
         err_list = []
-        for i, flow_path in enumerate([bwd_flow_path, fwd_flow_path]): # First calculate on backward flow, then forward flow.
-            # if not the last idx, calculate backward flow, else calculate backward and forward flow
-            if idx < len(bwd_flow_path) - 1:
-                if i == 1:
-                    continue
         # for flow_path in [bwd_flow_path]: # Only calculate on backward flow.
-            print(flow_path)
-            flow = readFlow(flow_path)
-            flow = torch.stack(
-                [
-                    2.0 * flow[..., 0] / (W - 1),
-                    2.0 * flow[..., 1] / (H - 1),
-                ],
-                dim=-1
-            )
+        flow = readFlow(fwd_flow_path)
+        flow = torch.stack(
+            [
+                2.0 * flow[..., 0] / (W - 1),
+                2.0 * flow[..., 1] / (H - 1),
+            ],
+            dim=-1
+        )
 
-            x2 = x1 + flow.view(-1, 2)  # (H*W, 2)
-            F, mask = cv2.findFundamentalMat(x1.numpy(), x2.numpy(), cv2.FM_LMEDS)
-            F = torch.from_numpy(F.astype(np.float32))  # (3, 3)
-            err = compute_sampson_error(x1, x2, F).reshape(H, W)
-            fac = (H + W) / 2
-            err = err * fac**2
-            err_list.append(err)
+        x2 = x1 + flow.view(-1, 2)  # (H*W, 2)
+        F, mask = cv2.findFundamentalMat(x1.numpy(), x2.numpy(), cv2.FM_LMEDS)
+        F = torch.from_numpy(F.astype(np.float32))  # (3, 3)
+        err = compute_sampson_error(x1, x2, F).reshape(H, W)
+        fac = (H + W) / 2
+        err = err * fac**2
+        err_list.append(err)
         
         err = torch.amax(torch.stack(err_list, 0), 0) # (H, W) per pixel max error from both directions
         err = ((err / err.max())).numpy() # normalize to (0, 255)
@@ -241,8 +235,8 @@ if __name__ == "__main__":
             os.makedirs(os.path.join(epipolar_dir))
         file_name = os.path.splitext(os.path.basename(image_paths[idx]))[0]
 
-        if idx == len(fwd_flow_paths) - 1 and i == 1:
-            file_name = os.path.splitext(os.path.basename(image_paths[idx+1]))[0]
+        # if idx == len(fwd_flow_paths) - 1 and i == 1:
+        #     file_name = os.path.splitext(os.path.basename(image_paths[idx+1]))[0]
         
         # save epipolar error
         Image.fromarray((err * 255.0).astype(np.uint8)).save(
@@ -266,31 +260,3 @@ if __name__ == "__main__":
 
         frames_epipolar_error.append(err)
         frames_mask.append(mask)
-    
-
-    # RUN SEMANTIC SEGMENTATION
-    # epipolar_paths = sorted(glob.glob(os.path.join(epipolar_dir, "*_erode.png")))
-    # sam2_image_seg(image_paths=[image_paths[0]], epipolar_paths=[epipolar_paths[0]], output_mask_dir=move_mask_dir)
-    # sam2_propagate_mask(img_dir, move_mask_dir, move_mask_dir, use_all_masks=False, file_suffix=".png")
-    # sam2_video_seg(img_dir, epipolar_paths, move_mask_dir)
-
-    # save video
-    # frames_epipolar_error = [((x * 255.0).astype(np.uint8)) for x in frames_epipolar_error]
-    # imageio.mimwrite(
-    #     os.path.join(epipolar_dir, "epipolar_error.mp4"),
-    #     np.stack(frames_epipolar_error),
-    #     fps=30,
-    #     quality=10,
-    #     format="ffmpeg",
-    #     output_params=["-f", "mp4"],
-    # )
-
-    # frames_mask = [(((x * 255.0).astype(np.uint8))) for x in frames_mask]
-    # imageio.mimwrite(
-    #     os.path.join(epipolar_dir, "move_mask.mp4"),
-    #     np.stack(frames_mask),
-    #     fps=30,
-    #     quality=10,
-    #     format="ffmpeg",
-    #     output_params=["-f", "mp4"],
-    # )

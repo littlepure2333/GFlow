@@ -1,152 +1,172 @@
-# GFlow
+<p align="center">
+  <h1 align="center">GFlow: Recovering 4D World from Monocular Video</h1>
+  <p align="center">
+    <a href="https://littlepure2333.github.io/home">Shizun Wang</a>
+    ·
+    <a href="https://adamdad.github.io/">Xingyi Yang</a>
+    ·
+    <a href="https://florinshen.github.io/">Qiuhong Shen</a>
+    ·
+    <a href="https://github.com/RoyMikeJiang">Zhenxiang Jiang</a>
+    ·
+    <a href="https://sites.google.com/site/sitexinchaowang/">Xinchao Wang</a>
+  </p>
+  <p align="center">National University of Singapore</p>
+  <h3 align="center"><a href="https://arxiv.org/abs/2405.18426">Paper</a> | <a href="https://littlepure2333.github.io/GFlow/">Project Page</a> | <a href="https://github.com/littlepure2333/gflow">Code</a> </h3>
+  <div align="center"></div>
+</p>
 
-## Prepare
-1. run `git clone --recursive https://github.com/littlepure2333/GFlow.git` because this project relies on some submodules.
-2. Install Msplat, dust3r(especially compiling the cuda kernels for RoPE, for faster inference speed) following original instructions.
-3. Make sure you have "./images" which contains some image sequences extract from the videos. (You can soft link my dir: `/home/wangshizun/data/images/`)
+## Updates
+* Sept 2024: Release code and instructions.
+---
 
-## Prepare
-* `bash scripts/depth.sh` to extract depth from images
-* `bash scripts/flow.sh` to extract optical flow from images
+## Installation
+1. Run `git clone --recursive https://github.com/littlepure2333/GFlow.git` to clone this repository. (If you have already cloned GFlow or found some sub-submodules missing in MSplat or MASt3R, run `git submodule update --init --recursive` to get all the submodules)
+2. Install `MSplat` and `MASt3R`(especially compiling the cuda kernels for RoPE, for faster inference speed) according to the [msplat installation instruction](https://github.com/pointrix-project/msplat?tab=readme-ov-file#how-to-install) and the [MASt3R installation instruction](https://github.com/naver/mast3r?tab=readme-ov-file#installation) in the same environment.
+3. Run `pip install -r requirements.txt` to install the required packages.
 
-## Run
-* `bash scripts/fit_2d.sh` A simple test for reconstruct image and optimize camera.
-* `bash scripts/fit_image.sh` Fit an image using texture init.
-* `bash scripts/fit_video.sh` Fit a video. Working in process.
+## Model Weights Download
+### MASt3R
+Refer to [MASt3R Checkpoints](https://github.com/naver/mast3r?tab=readme-ov-file#checkpoints), download the [MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth](https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth) and copy it to the path `./third_party/mast3r/weights/`.
+### UniMatch
+Refer to [UniMatch ModelZoo](https://github.com/autonomousvision/unimatch/blob/master/MODEL_ZOO.md), download the model you prefer and copy it to the path `./third_party/unimatch/pretrained/`.
 
-## View
-* `bash scripts/match.sh` Generate gaussian points tracking after fitting a video.
-* `bash scripts/run_viewer.sh` Run a web viewer to view the frames
+We used `GMFlow-scale2-regrefine6-mixdata` model. [[download link](https://s3.eu-central-1.amazonaws.com/avg-projects/unimatch/pretrained/gmflow-scale2-regrefine6-mixdata-train320x576-4e7b215d.pth)]
 
+## Dataset Preparation
+### DAVIS
+#### One-shot Script
+Run `./scripts/prepare_davis.sh [gpu_id] [seg_size] [scene_graph] [unimatch_weight_path]`. The arguments are all optional, with default value described below.
 
+The prepared dataset will be in `./data/davis/`.
+#### Step-by-step
+1. Download the [DAVIS 2016](https://davischallenge.org/davis2016/code.html) Dataset.
+2. Unzip the compressed dataset file into your desired path(`PATH_TO_ORI_DAVIS`).
+3. Run `./scripts/organize_davis.sh PATH_TO_ORI_DAVIS/JPEGImages/480p PATH_TO_TARGET_DAVIS(such as ./data/davis)` to reorganize the images' structure.
+**Notes**: To make all scripts executable and convenient to run, you can add execute permission to all the script files by `chmod +x ./scripts/*.sh`.
+4. Run `./scripts/depth_mast3r.sh PATH_TO_TARGET_DAVIS [gpu_id] [seg_size] [scene_graph]` to extract depth and camera (gpu_id, seg_size, scene_graph are optional with default 0, 200, 'logwin' separately).
+5. Run `./scripts/flow_unimatch.sh PATH_TO_TARGET_DAVIS [unimatch_weight_path] [gpu_id]` to extract optical flow (unimatch_weight_path, gpu_id are optional with default third_party/unimatch/pretrained/gmflow-scale2-regrefine6-mixdata-train320x576-4e7b215d.pth, 0 separately).
+6. Run `./scripts/move_seg.sh parent_folder [threshold] [gpu_id]` to extract the segmentation of the moving part (threshold, gpu_id are optional with default 0.5, 0).
 
+### TAP-Vid DAVIS
+This dataset is used for evaluating the model's tracking performance on DAVIS dataset.
+#### Step-by-step
+1. Download the [TAP-Vid DAVIS Val set](https://storage.googleapis.com/dm-tapnet/tapvid_davis.zip).
+2. Unzip the compressed dataset file into your desired path (`PATH_TO_TAP_DAVIS`).
+3. Run `./scripts/tapvid_davis.sh tapvid_path [davis_path]`
 
-> Below are original readme of MSplat.
+## Run GFlow
 
+### Fit an image
+Please refer to another repository from us [prior-driven-init-gs](https://github.com/littlepure2333/prior-driven-init-gs).
 
-
-
-# MSplat
-
-MSplat is a modular differential gaussian rasterization library. We have refactored the original repository for easier understanding and extension.
-
-**What's new：**
-- The camera model has been changed from FOV to pinhole.
-- Optimization on camera model is support.
-- SH evaluation is now supported up to level 10.
-- Differentiable rendering of extensible features (RGB, depth and even more) is now supported. 
-
-## How to install
-```shell
-git clone https://github.com/pointrix-project/msplat.git --recursive
-cd msplat
-pip install .
+<!-- ### Simple test for reconstruct image and optimize camera
+Example in `scripts/fit_2d.sh`.
+```
+python gflow/fit_2d.py \
+        --img_path /path/to/image \
+        --save_path /path/to/save/video \ 
+        --num_points 10000 \            # Number of gaussian points
+        --max_iter 2000 \               # Maximum number of iterations
+        --seed 123 \                    # Random Seed
+```
+### Fit an image using texture init
+Example in `scripts/fit_image.sh`.
+```
+python gflow/fit_image.py \
+        --img_path /path/to/image \
+        --depth_path /path/to/depth/image \
+        --num_points 10000 \            # Number of gaussian points
+        --iterations 500 \              # Number of iterations
+        --seed 123 \                    # Random Seed
+``` -->
+### Fit a video
+Example in `scripts/fit_video.sh`.
+```
+python gflow/fit_video.py \
+    --num_points 60000 \                 # Number of Gaussian points for video processing
+    --resize 480 \                       # Resize video frames to a specified size
+    --lr 4e-3 \                          # Initial learning rate
+    --lr_after 1e-3 \                    # Learning rate after initial iterations
+    --lr_camera 0.00 \                   # Camera learning rate
+    --lr_camera_after 5e-4 \             # Camera learning rate after initial iterations
+    --camera_first \                     # Run camera optimization first
+    --iterations_camera 150 \            # Number of iterations for camera optimization
+    --iterations_first 500 \             # Initial iterations
+    --iterations_after 300 \             # Iterations after the initial process
+    --densify_interval 150 \             # Interval to perform densification
+    --grad_threshold 5e-3 \              # Gradient threshold for densification
+    --densify_times 2 \                  # Number of times to densify
+    --densify_interval_after 100 \       # Densification interval after the initial iterations
+    --grad_threshold_after 1e-4 \        # Gradient threshold after the initial process
+    --densify_times_after 1 \            # Number of times to densify after the initial process
+    --lambda_rgb 1.0 \                   # Lambda weight for RGB loss
+    --lambda_depth 0.0001 \              # Lambda weight for depth loss
+    --lambda_var 10.0 \                  # Lambda weight for variance loss
+    --lambda_still 10.0 \                # Lambda weight for stillness loss
+    --lambda_flow 0.01 \                 # Lambda weight for flow loss
+    --background "black" \               # Background color (black, white, cyan)
+    --frame_range -1 \                   # Range of frames to process (-1 processes all)
+    --frame_start 0 \                    # Starting frame for processing
+    --skip_interval 1 \                  # Interval to skip frames during processing
+    --traj_num 100 \                     # Number of trajectories
+    --traj_offset 2 \                    # Trajectory offset value
+    --sequence_path $sequence_path \     # Path to the images sequence
+    --no_common_logs \                   # Do not use common logs
+    --logs_suffix "logs_cam_init_only"   # Logs suffix
 ```
 
-## Camera Model
-We use a pinhole camera model:
-
-$$dx=K[R_{cw}|t_{cw}]X$$
-
-$$d\begin{bmatrix}
-  u \\ 
-  v \\ 
-  1
-\end{bmatrix} = \begin{bmatrix}
-  f_x & 0 & c_x \\
-  0 &  f_y & c_y \\
-  0 & 0 & 1 \\
-\end{bmatrix}\begin{bmatrix}
-  r_{11} & r_{12} & r_{13} & t_1 \\
-  r_{21} & r_{22} & r_{23} & t_2 \\
-  r_{31} & r_{32} & r_{33} & t_3 \\
-\end{bmatrix}\begin{bmatrix}
-  X \\ 
-  Y \\ 
-  Z \\ 
-  1
-\end{bmatrix}$$
-
-* $(X, Y, Z)$ is the coordinate of a 3D point in the world coordinate system.
-* $(u,v)$ are the coordinate of the projection point in **pixels**, $d$ is the depth value. 
-* $K$ is a matrix of intrinsic parameters in pixels. $(c_x, c_y)$ is the principal point, which is usually the image center $(\frac{W}{2},\frac{H}{2})$. $f_x$ and $f_y$ are the focal lengths.
-* $R_{cw}$ and $T_{cw}$ are extrinsic parameters (view matrix) indicated **world-to-camera** transformation in  [**OpenCV/Colmap** convention](https://kit.kiui.moe/camera/#common-camera-coordinate-systems).
-
-In our API, you need to provide the camera parameters in the following format:
-- Intrinsic Parameters $[f_x, f_y, c_x, c_y]$
-- Extrinsic Parameters $[R_{cw}|t_{cw}]$
-
-## Optimization on Camera
-It hasn't been validated too much. Since a camera is involved in the optimization of many 3D Gaussian points, the gradient of the camera is  accumulating, potentially leading to numerical issues.
-
-## High-level SH
-We have upgraded the level of the Spherical Harmonics (SH) from the original 3 to 10.
-
-## Extensiable features
-We abstract concepts such as RGB, depth, etc. to features and enable feature rendering for any channels. As a result, we easily render rgb map, depth map and orther feature maps without the need to modify and recompile the kernel.
-
-## More easy to understand
-We break the heavy and confusing kernel to clear and easy-understant parts, which is more friendly for beginers. You can invoke the renderer with a single line of command, or you can break it down into steps.
-
-```python
-import torch
-import gs
-
-# the inputs
-H: int = ... # image height
-W: int = ... # image width
-intr: torch.Tensor = ... # [4,], (fx, fy, cx, cy) in pixels
-extr: torch.Tensor = ... # [4, 4], camera extrinsics in OpenCV convention.
-xyzs: torch.Tensor = ... # [N, 3], Gaussian centers
-feats: torch.Tensor = ... # [N, C], Gaussian RGB features (or any other features with arbitrary channels!)
-opacity: torch.Tensor = ... # [N, 1], Gaussian opacity
-scales: torch.Tensor = ... # [N, 3], Gaussian scales
-rotations: torch.Tensor = ... # [N, 4], Gaussian rotations in quaternion
-bg: float = 0 # scalar, background for rendered feature maps
-
-# =================== one-line interface =================== 
-rendered_image = gs.rasterization(
-    xyzs, scales, rotations, opacity, feats, intr, extr, H, W, bg
-) # [C, H, W]
-
-# =================== steps interface =================== 
-# project points
-(uv, depth) = gs.project_point(xyzs, intr, extr, W, H)
-visible = depth != 0
-
-# compute cov3d
-cov3d = gs.compute_cov3d(scales, rotations, visible)
-
-# ewa project
-(conic, radius, tiles_touched) = gs.ewa_project(
-    xyzs, cov3d, intr, extr, uv, W, H, visible
-)
-
-# sort
-(gaussian_ids_sorted, tile_range) = gs.sort_gaussian(
-    uv, depth, W, H, radius, tiles_touched
-)
-
-# alpha blending
-rendered_image = gs.alpha_blending(
-    uv, conic, opacity, rgbs, gaussian_ids_sorted, tile_range, bg, W, H,
-)
+## Evaluation
+### Compute Reconstruction & Tracking & Segmentation & Camera Metrics
+#### Specific Sequence
+```
+python gflow/benchmark \
+        --log_path ./Path/to/Result \
+        --sequence_path ./Path/to/Sequence \
+        --csv_name "name of csv file" \
+        --eval_recon True \
+        --eval_track True \
+        --eval_seg True \
+        --eval_camera True
+```
+#### Whole Dataset
+```
+python gflow/benchmark_multi.py \
+        --path ./Path/to/Dataset \
+        --log_suffix "Suffix for the log directory." \
 ```
 
-## Acknowledgment
-We express our sincerest appreciation to the developers and contributors of the following projects:
-- [3D Gaussian Splatting](https://github.com/graphdeco-inria/gaussian-splatting): 3D Gaussian Splatting for Real-Time Radiance Field Rendering.
+## View Result
+Run a web viewer to view the frames.
 
-If you find that 3D gaussian splatting implemetation in our project helpful, please consider to cite:
+Example in `bash scripts/run_viewer.sh`.
+
 ```
-@Article{kerbl3Dgaussians,
-      author       = {Kerbl, Bernhard and Kopanas, Georgios and Leimk{\"u}hler, Thomas and Drettakis, George},
-      title        = {3D Gaussian Splatting for Real-Time Radiance Field Rendering},
-      journal      = {ACM Transactions on Graphics},
-      number       = {4},
-      volume       = {42},
-      month        = {July},
-      year         = {2023},
-      url          = {https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/}
+python gflow/viewer.py \
+    --gpu 0 \                           # GPU you prefer to use
+    --port 8088 \                       # The port to access the viewer website
+    --folder "./logs/car-turn-results/" # The results folder you want to view
+# The website will be localhost:8088. You may need ssh or vscode to forward the port opened on the server to your own device.
+```
+
+## Citation
+```
+@inproceedings{wang2025gflow,
+  title={Gflow: Recovering 4d world from monocular video},
+  author={Wang, Shizun and Yang, Xingyi and Shen, Qiuhong and Jiang, Zhenxiang and Wang, Xinchao},
+  booktitle={Proceedings of the AAAI Conference on Artificial Intelligence},
+  volume={39},
+  number={8},
+  pages={7862--7870},
+  year={2025}
 }
 ```
+
+## Acknowledgement
+We thank the following projects and their developers for their work:
+* [MSplat](https://github.com/pointrix-project/msplat): A modular differential gaussian rasterization library
+* [3DGS](https://github.com/graphdeco-inria/gaussian-splatting): 3D Gaussian Splatting for Real-Time Radiance Field Rendering
+* [UniMatch](https://github.com/autonomousvision/unimatch): Unifying Flow, Stereo and Depth Estimation
+* [MASt3R](https://github.com/naver/mast3r): Grounding Image Matching in 3D with MASt3R
+
+And a big thanks to @RoyMikeJiang for helping to reorganize the code.

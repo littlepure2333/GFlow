@@ -2,6 +2,7 @@ tqdm
 imageio[ffmpeg]
 torch
 torchvision
+torchaudio
 jaxtyping
 tyro
 git+https://github.com/NVlabs/nvdiffrast.git
@@ -17,7 +18,7 @@ plyfile
 alphashape
 scikit-image
 piqa
-concave_hull
+git+https://github.com/cubao/concave_hull.git
 einops
 roma
 alphashape
@@ -27,5 +28,9 @@ scikit-learn
 shapely
 viser
 tensorboard
+tensorboardX
 gradio
 rtree
+pillow
+git+https://github.com/facebookresearch/segment-anything.git
+evo
