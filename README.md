@@ -12,13 +12,15 @@
     <a href="https://sites.google.com/site/sitexinchaowang/">Xinchao Wang</a>
   </p>
   <p align="center">National University of Singapore</p>
+  <p align="center">AAAI 2025</p>
   <h3 align="center"><a href="https://arxiv.org/abs/2405.18426">Paper</a> | <a href="https://littlepure2333.github.io/GFlow/">Project Page</a> | <a href="https://github.com/littlepure2333/gflow">Code</a> </h3>
   <div align="center"></div>
 </p>
 
-## Updates
-* Sept 2024: Release code and instructions.
----
+<p align="center">
+  <img src="assets/gflow_method.png" alt="GFlow Method" width="100%">
+</p>
+
 
 ## Installation
 1. Run `git clone --recursive https://github.com/littlepure2333/GFlow.git` to clone this repository. (If you have already cloned GFlow or found some sub-submodules missing in MSplat or MASt3R, run `git submodule update --init --recursive` to get all the submodules)
