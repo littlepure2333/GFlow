@@ -171,4 +171,4 @@ We thank the following projects and their developers for their work:
 * [UniMatch](https://github.com/autonomousvision/unimatch): Unifying Flow, Stereo and Depth Estimation
 * [MASt3R](https://github.com/naver/mast3r): Grounding Image Matching in 3D with MASt3R
 
-And a big thanks to @RoyMikeJiang for helping to reorganize the code.
+And a big thanks to @[RoyMikeJiang](https://github.com/RoyMikeJiang) for helping to reorganize the code.
