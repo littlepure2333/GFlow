@@ -12,7 +12,7 @@
     <a href="https://sites.google.com/site/sitexinchaowang/">Xinchao Wang</a>
   </p>
   <p align="center">National University of Singapore</p>
-  <p align="center">AAAI 2025</p>
+  <h4 align="center"> AAAI 2025 </h4>
   <h3 align="center"><a href="https://arxiv.org/abs/2405.18426">Paper</a> | <a href="https://littlepure2333.github.io/GFlow/">Project Page</a> | <a href="https://github.com/littlepure2333/gflow">Code</a> </h3>
   <div align="center"></div>
 </p>
